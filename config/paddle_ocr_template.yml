@@ -1,0 +1,107 @@
+Global:
+  debug: false
+  use_gpu: _USE_GPU_
+  epoch_num: _EPOCH_NUM_
+  save_model_dir: "_SAVE_MODEL_DIR_"
+  save_epoch_step: 32
+  save_max_history: 3
+  eval_batch_step: [0, 100]
+  log_smooth_window: 20
+  print_batch_step: 10
+  use_visualdl: false
+  character_dict_path: "_CHAR_DICT_PATH_"
+  max_text_length: 3
+  use_space_char: true
+  checkpoints: 
+  
+Architecture:
+  model_type: rec
+  algorithm: SVTR_LCNet
+  Transform:
+  Backbone:
+    name: PPLCNetV3
+    scale: 0.95
+  Neck:
+    name: SequenceEncoder
+    encoder_type: svtr 
+    depth: 2
+    hidden_dims: 120
+    use_guide: True
+  Head:
+    name: CTCHead
+    fc_decay: 0.00001
+
+Loss:
+  name: CTCLoss
+
+PostProcess:
+  name: CTCLabelDecode
+
+Metric:
+  name: RecMetric
+  main_indicator: acc
+  ignore_space: False
+
+Optimizer:
+  name: Adam
+  beta1: 0.9
+  beta2: 0.999
+  lr:
+    name: Cosine
+    learning_rate: _LEARNING_RATE_
+    warmup_epoch: 2
+  regularizer:
+    name: L2
+    factor: 0.00001
+
+Train:
+  dataset:
+    name: SimpleDataSet
+    data_dir: "_TRAIN_DATA_DIR_"
+    label_file_list: [ "_ABS_TRAIN_LABEL_FILE_" ]
+    transforms:
+      - DecodeImage: 
+          img_mode: BGR
+          channel_first: false
+      - CTCLabelEncode: 
+      - NormalizeImage:
+          scale: 1./255.
+          mean: [0.5, 0.5, 0.5]
+          std: [0.5, 0.5, 0.5]
+          order: 'hwc'
+      - RecResizeImg:
+          image_shape: [3, 48, 64]
+      - KeepKeys: 
+          keep_keys: ['image', 'label', 'length']
+
+  loader:
+    shuffle: true
+    batch_size_per_card: _BATCH_SIZE_
+    drop_last: true
+    num_workers: 4
+
+Eval:
+  dataset:
+    name: SimpleDataSet
+    data_dir: "_VAL_DATA_DIR_"
+    label_file_list: [ "_ABS_VAL_LABEL_FILE_" ]
+    transforms:
+      - DecodeImage: 
+          img_mode: BGR
+          channel_first: false
+      - CTCLabelEncode:
+      - NormalizeImage:
+          scale: 1./255.
+          mean: [0.5, 0.5, 0.5]
+          std: [0.5, 0.5, 0.5]
+          order: 'hwc'
+      - RecResizeImg:
+          image_shape: [3, 48, 64]
+      - KeepKeys: 
+          keep_keys: ['image', 'label', 'length']
+      
+  loader:
+    shuffle: false
+    drop_last: false
+    batch_size_per_card: 16
+    num_workers: 4

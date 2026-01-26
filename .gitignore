@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+*.egg
+*.egg-info/
+.coverage
+.pytest_cache/
+htmlcov/
+dist/
+
+# IDEs
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Data
+# Explicitly ignore generated dataset parts
+/data/dataset/yolo/images/
+/data/dataset/yolo/labels/
+/data/dataset/paddle/   # Ignore all PaddleOCR dataset content as it's typically generated
+/data/dataset/trocr/    # Ignore all TrOCR dataset content as it's generated
+
+# Ignore collected raw data
+/data/raw/collected/
+/data/synthetic_trocr_data/
+/data/raw/             # Source raw data (images, gt.jsonl)
+/data/models/          # Models (if not in runs/)
+/data/dataset/yolo/dataset.yaml # YOLO dataset configuration
+
+# --- Existing runs/ and config/ entries ---
+runs
+# Hugging Face cache
+.cache/huggingface/hub/
+
+# Generated images (already deleted, but good to keep in .gitignore)
+

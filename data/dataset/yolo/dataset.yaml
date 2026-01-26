@@ -1,0 +1,13 @@
+train: ./images/train/
+val: ./images/val
+test: ./images/test
+
+nc: 2
+names: ['big', 'small']
+
+roboflow:
+  workspace: yotro-nqx2b
+  project: carpth-ey4ee
+  version: 1
+  license: BY-NC-SA 4.0
+  url: https://app.roboflow.com/yotro-nqx2b/carpth-ey4ee/1
