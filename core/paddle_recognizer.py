@@ -2,37 +2,121 @@ import os
 import cv2
 import paddle
 import numpy as np
-import logging # Import logging
+import logging
 from PIL import Image
 from config import settings
 from paddle.inference import Config, create_predictor
+import yaml
+# Since we are loading a training model, we need the model-building components
+from libs.ppocr.modeling.architectures import build_model
+from libs.ppocr.utils.load_static_weights import load_static_weights
 
+# --- New utility function for similarity calculation ---
+def cosine_similarity(vec1, vec2):
+    """计算两个向量之间的余弦相似度"""
+    vec1 = vec1.flatten()
+    vec2 = vec2.flatten()
+    dot_product = np.dot(vec1, vec2)
+    norm_vec1 = np.linalg.norm(vec1)
+    norm_vec2 = np.linalg.norm(vec2)
+    if norm_vec1 == 0 or norm_vec2 == 0:
+        return 0.0
+    return dot_product / (norm_vec1 * norm_vec2)
 
 class PaddleRecognizer:
     def __init__(self, model_name=None):
-        logger = logging.getLogger(__name__) # Get logger
-        ocr_cfg = settings.ocr.paddle
+        self.logger = logging.getLogger(__name__)
+        self.ocr_cfg = settings.ocr.paddle
+        self.path_cfg = settings.paths
 
-        model_dir = model_name if model_name else ocr_cfg.model_dir
-        
+        # Keep the original inference engine for the 'recognize' method
         try:
+            inference_model_dir = model_name if model_name else self.ocr_cfg.inference_model_dir
             self.recognizer = PaddleRecInfer(
-                model_dir=model_dir,
-                dict_path=ocr_cfg.char_dict_path,
-                image_shape=(3, 48, 64),
-                use_gpu=ocr_cfg.use_gpu,
+                model_dir=inference_model_dir,
+                dict_path=self.ocr_cfg.char_dict_path,
+                image_shape=(3, 64, 64),
+                use_gpu=self.ocr_cfg.use_gpu,
             )
         except Exception as e:
-            logger.error(f"PaddleRecognizer 初始化失败: {e}", exc_info=True)
-            self.recognizer = None # Set to None if initialization fails
+            self.logger.error(f"PaddleRecognizer: Failed to initialize standard inference engine: {e}", exc_info=True)
+            self.recognizer = None
+
+        # Placeholder for the feature extraction model, loaded on demand
+        self.feature_extractor = None
+        self.feature_extractor_checkpoint = self.ocr_cfg.trained_model_dir # e.g., "runs/paddle_train/best_model"
+
+    def _load_feature_extractor(self):
+        """Lazy-loads the model for feature extraction."""
+        self.logger.info("--- 正在加载用于特征提取的 PaddleOCR 模型 ---")
+        try:
+            # Load the architecture from the template config
+            template_path = os.path.join(self.path_cfg.base_dir, "config", "paddle_ocr_template.yml")
+            with open(template_path, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f)
+
+            # --- Critical Change: Remove the Head to get features ---
+            config['Architecture']['Head'] = None
+            
+            # Fill in required global settings for model building
+            config['Global'] = {
+                'character_dict_path': os.path.join(self.path_cfg.base_dir, self.ocr_cfg.char_dict_path),
+                'use_space_char': self.ocr_cfg.use_space_char,
+                'max_text_length': self.ocr_cfg.max_text_length
+            }
+
+            model = build_model(config['Architecture'])
+
+            # Load the trained weights from the checkpoint
+            checkpoint_path = os.path.join(self.path_cfg.base_dir, self.feature_extractor_checkpoint, "student")
+            if not os.path.exists(f"{checkpoint_path}.pdparams"):
+                 checkpoint_path = os.path.join(self.path_cfg.base_dir, self.feature_extractor_checkpoint, "best_accuracy")
+            
+            self.logger.info(f"从以下位置加载权重: {checkpoint_path}")
+            load_static_weights(model, f"{checkpoint_path}.pdparams")
+            
+            model.eval()
+            self.feature_extractor = model
+            self.logger.info("--- 特征提取模型加载成功 ---")
+        except Exception as e:
+            self.logger.error(f"加载特征提取模型失败: {e}", exc_info=True)
+            self.feature_extractor = None
+
+    def get_embedding(self, image):
+        """
+        获取图像的特征向量 (embedding)。
+        image: PIL Image or BGR numpy.ndarray
+        """
+        if self.feature_extractor is None:
+            self._load_feature_extractor()
+            if self.feature_extractor is None:
+                return None # Failed to load
+
+        # Preprocess the image
+        if isinstance(image, Image.Image):
+            image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+        
+        # Use the same preprocessing as the inference engine
+        preprocessed_img = self.recognizer._resize_norm_img(image)
+        img_tensor = paddle.to_tensor(np.expand_dims(preprocessed_img, axis=0))
+
+        # Get feature embedding
+        with paddle.no_grad():
+            features = self.feature_extractor(img_tensor)
+        
+        # Global average pooling to get a fixed-size vector from sequence
+        # The output of the Neck is typically [batch, sequence_length, feature_dim]
+        embedding = paddle.mean(features, axis=1).numpy()
+        
+        return embedding
 
     def recognize(self, image):
         if self.recognizer is None:
-            return "" # Return empty string if recognizer is not initialized
+            return ""
         if isinstance(image, Image.Image):
             image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
         return self.recognizer.recognize(image)
-
+        
 class CTCLabelDecoder:
     """
     PaddleOCR 风格 CTC 解码器（支持中文）
@@ -83,7 +167,7 @@ class PaddleRecInfer:
         self,
         model_dir,
         dict_path,
-        image_shape=(3, 48, 160),
+        image_shape=(3, 64, 64),
         use_gpu=True,
     ):
         logger = logging.getLogger(__name__) # Get logger
@@ -94,7 +178,7 @@ class PaddleRecInfer:
             if not self.decoder.character: # Check if decoder failed to init
                 raise RuntimeError("CTCLabelDecoder 初始化失败，无法继续。")
 
-            model_file = os.path.join(model_dir, "inference.json")
+            model_file = os.path.join(model_dir, "inference.pdmodel")
             params_file = os.path.join(model_dir, "inference.pdiparams")
 
             if not os.path.exists(model_file):

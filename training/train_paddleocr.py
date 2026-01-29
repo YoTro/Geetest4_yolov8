@@ -143,7 +143,52 @@ def train_paddle_model(
             return {"success": False, "error": f"Training process failed with exit code {rc}."}
 
         logger.info("--- PaddleOCR 模型训练成功 ---")
-        return {"success": True, "message": f"模型训练完成，已保存至 {config.trained_model_dir}"}
+        
+        # --- 新增：自动导出模型 ---
+        logger.info("--- 开始自动导出推理模型 ---")
+        
+        export_script_path = os.path.join(path_config.base_dir, "libs", "tools", "export_model.py")
+        if not os.path.exists(export_script_path):
+            logger.error(f"找不到导出脚本: {export_script_path}")
+            return {"success": True, "message": "训练成功，但导出脚本未找到，跳过导出。"}
+
+        # 使用训练好的最佳模型作为导出源
+        # 注意: PaddleOCR 保存的最佳模型通常在 'best_accuracy'，而不是 'student'
+        best_model_path = os.path.join(save_model_dir, "best_accuracy").replace('\\', '/')
+        inference_save_dir = os.path.join(path_config.base_dir, config.inference_model_dir).replace('\\', '/')
+
+        export_command = [
+            python_executable,
+            export_script_path,
+            f"-c={config_path}",
+            f"-o",
+            f"Global.checkpoints={best_model_path}",
+            f"Global.save_inference_dir={inference_save_dir}"
+        ]
+
+        logger.info(f"即将执行导出命令: {' '.join(export_command)}")
+        try:
+            # 使用 subprocess.run 因为导出过程通常较快且我们关心其完整输出
+            export_result = subprocess.run(
+                export_command,
+                capture_output=True,
+                text=True,
+                encoding=locale.getpreferredencoding(),
+                errors='replace',
+                env=env,
+                check=True # 如果返回非零退出码，则会引发 CalledProcessError
+            )
+            logger.info("--- 推理模型导出成功 ---")
+            logger.info(f"导出日志:\n{export_result.stdout}")
+            return {"success": True, "message": f"模型训练和导出均成功。推理模型已保存至 {config.inference_model_dir}"}
+        
+        except subprocess.CalledProcessError as e:
+            logger.error(f"推理模型导出失败，返回码: {e.returncode}")
+            logger.error(f"导出错误日志:\n{e.stderr}")
+            return {"success": False, "error": f"模型训练成功，但导出失败: {e.stderr}"}
+        except Exception as e:
+            logger.error(f"导出过程中发生未知错误: {e}", exc_info=True)
+            return {"success": False, "error": f"模型训练成功，但导出时发生未知错误: {str(e)}"}
 
     except FileNotFoundError:
         logger.error(f"命令执行失败。无法找到 '{python_executable}' 或 '{train_script_path}'。")

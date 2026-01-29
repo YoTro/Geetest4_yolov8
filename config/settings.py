@@ -184,14 +184,16 @@ class PaddleOCRTrainingConfig:
     inference_model_dir: str = "data/models/inference" # 新增：最终用于推理的模型目录，假设训练脚本会导出到这里
     use_gpu: str = "GPU"
     use_angle_cls: bool = True # 是否使用角度分类器
+    use_space_char: bool = False
     lang: str = "ch"  # 默认语言
     # 训练超参数
-    epoch: int = 500
+    epoch: int = 300
     batch_size: int = 32
     learning_rate: float = 0.001
-    
+    max_text_length: int = 2
     # 字典文件路径
     char_dict_path: str = "libs/ppocr/utils/ppocr_keys_v1.txt"
+    similarity_threshold: float = 0.7 # 用于特征向量相似度匹配的阈值
 
 @dataclass
 class OCRConfig:

@@ -117,7 +117,11 @@ class SimpleDataSet(Dataset):
             ext_data.append(data)
         return ext_data
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx, _recursive_count=0):
+        if _recursive_count > 10:
+            self.logger.error("FATAL: Failed to get a valid sample after 10 retries. Please check your dataset and file paths in label files.")
+            raise RuntimeError("Failed to get a valid sample after 10 retries. Check logs for details.")
+            
         file_idx = self.data_idx_order_list[idx]
         data_line = self.data_lines[file_idx]
         try:
@@ -128,29 +132,37 @@ class SimpleDataSet(Dataset):
             label = substr[1]
             img_path = os.path.join(self.data_dir, file_name)
             data = {"img_path": img_path, "label": label}
+            
+            # self.logger.debug(f"Attempting to load image: {img_path}") # Enhanced logging
+
             if not os.path.exists(img_path):
-                raise Exception("{} does not exist!".format(img_path))
+                # Log the problematic path and line
+                self.logger.error(f"Image file does not exist: {img_path}. From label line: '{data_line.strip()}'")
+                raise FileNotFoundError(f"{img_path} does not exist!")
+            
             with open(data["img_path"], "rb") as f:
                 img = f.read()
                 data["image"] = img
+
             data["ext_data"] = self.get_ext_data()
             data["filename"] = data["img_path"]
             outs = transform(data, self.ops)
-        except:
+        except Exception as e:
             self.logger.error(
-                "When parsing line {}, error happened with msg: {}".format(
-                    data_line, traceback.format_exc()
+                "When parsing line '{}', an error occurred: {}\nTraceback: {}".format(
+                    data_line.strip(), e, traceback.format_exc()
                 )
             )
             outs = None
+            
         if outs is None:
-            # during evaluation, we should fix the idx to get same results for many times of evaluation.
+            self.logger.warning(f"Failed to process line, trying another sample. Failed line: {data_line.strip()}")
             rnd_idx = (
                 np.random.randint(self.__len__())
                 if self.mode == "train"
                 else (idx + 1) % self.__len__()
             )
-            return self.__getitem__(rnd_idx)
+            return self.__getitem__(rnd_idx, _recursive_count + 1)
         return outs
 
     def __len__(self):
