@@ -22,8 +22,9 @@ dist/
 Thumbs.db
 
 # Logs
-logs/
 *.log
+logs/*
+!logs/__init__.py
 
 # Data
 # Explicitly ignore generated dataset parts

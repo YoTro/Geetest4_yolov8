@@ -69,6 +69,8 @@ def train_paddle_model(
     template_config['Global']['epoch_num'] = config.epoch
     template_config['Global']['save_model_dir'] = save_model_dir
     template_config['Global']['character_dict_path'] = char_dict_path
+    template_config['Global']['max_text_length'] = config.max_text_length
+    template_config['Global']['use_space_char'] = config.use_space_char
     if config.model_dir:
         template_config['Global']['checkpoints'] = os.path.join(path_config.base_dir, config.model_dir).replace('\\', '/') # Use model_dir as checkpoints for pretrained model
 

@@ -9,7 +9,7 @@ from paddle.inference import Config, create_predictor
 import yaml
 # Since we are loading a training model, we need the model-building components
 from libs.ppocr.modeling.architectures import build_model
-from libs.ppocr.utils.load_static_weights import load_static_weights
+from libs.ppocr.utils.save_load import load_pretrained_params
 
 # --- New utility function for similarity calculation ---
 def cosine_similarity(vec1, vec2):
@@ -35,7 +35,7 @@ class PaddleRecognizer:
             self.recognizer = PaddleRecInfer(
                 model_dir=inference_model_dir,
                 dict_path=self.ocr_cfg.char_dict_path,
-                image_shape=(3, 64, 64),
+                image_shape=(3, 32, 100),
                 use_gpu=self.ocr_cfg.use_gpu,
             )
         except Exception as e:
@@ -68,12 +68,14 @@ class PaddleRecognizer:
             model = build_model(config['Architecture'])
 
             # Load the trained weights from the checkpoint
-            checkpoint_path = os.path.join(self.path_cfg.base_dir, self.feature_extractor_checkpoint, "student")
+            # Note: The 'best_accuracy' checkpoint is often the one to use
+            checkpoint_path = os.path.join(self.path_cfg.base_dir, self.feature_extractor_checkpoint, "best_accuracy")
             if not os.path.exists(f"{checkpoint_path}.pdparams"):
-                 checkpoint_path = os.path.join(self.path_cfg.base_dir, self.feature_extractor_checkpoint, "best_accuracy")
+                 # Fallback to student model if best_accuracy doesn't exist
+                 checkpoint_path = os.path.join(self.path_cfg.base_dir, self.feature_extractor_checkpoint, "student")
             
-            self.logger.info(f"从以下位置加载权重: {checkpoint_path}")
-            load_static_weights(model, f"{checkpoint_path}.pdparams")
+            self.logger.info(f"从以下位置加载权重: {checkpoint_path}.pdparams")
+            load_pretrained_params(model, checkpoint_path)
             
             model.eval()
             self.feature_extractor = model
@@ -167,7 +169,7 @@ class PaddleRecInfer:
         self,
         model_dir,
         dict_path,
-        image_shape=(3, 64, 64),
+        image_shape=(3, 32, 100),
         use_gpu=True,
     ):
         logger = logging.getLogger(__name__) # Get logger
@@ -178,11 +180,14 @@ class PaddleRecInfer:
             if not self.decoder.character: # Check if decoder failed to init
                 raise RuntimeError("CTCLabelDecoder 初始化失败，无法继续。")
 
-            model_file = os.path.join(model_dir, "inference.pdmodel")
+            model_file = os.path.join(model_dir, "inference.json")
             params_file = os.path.join(model_dir, "inference.pdiparams")
 
             if not os.path.exists(model_file):
-                raise FileNotFoundError(f"Paddle 推理模型文件未找到: {model_file}")
+                # If JSON format not found, try old .pdmodel format
+                model_file = os.path.join(model_dir, "inference.pdmodel")
+                if not os.path.exists(model_file):
+                    raise FileNotFoundError(f"Paddle 推理模型文件未找到: {os.path.join(model_dir, 'inference.json')} 或 {os.path.join(model_dir, 'inference.pdmodel')}")
             if not os.path.exists(params_file):
                 raise FileNotFoundError(f"Paddle 推理参数文件未找到: {params_file}")
 
@@ -193,7 +198,7 @@ class PaddleRecInfer:
             else:
                 config.disable_gpu()
 
-            config.enable_memory_optim()
+            # config.enable_memory_optim()
             config.switch_ir_optim(True)
 
             self.predictor = create_predictor(config)
