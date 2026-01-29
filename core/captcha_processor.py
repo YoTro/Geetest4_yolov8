@@ -2,6 +2,8 @@
 验证码处理器
 整合了验证码处理的完整流程、模式切换和错误管理。
 """
+import os
+import sys
 import time
 import logging
 import requests
@@ -201,15 +203,48 @@ class CaptchaProcessor:
 
 
     def _process_manual(self, load_data: Dict[str, Any]) -> Dict[str, Any]:
-        """使用手动模式处理验证码。"""
+        """使用手动模式处理验证码。(根据环境切换GUI/CLI)"""
         image_urls = self.geetest.extract_image_urls(load_data)
         
-        user_coords, passtime = manual_fallback.get_user_input_with_gui(
-            main_image_url=image_urls["main_img"],
-            ques_image_urls=image_urls.get("ques_imgs", []),
-            session=self.session,
-            timeout=self.settings.mode_switch.manual_timeout
-        )
+        main_image = image_processor.download_image(self.session, image_urls["main_img"])
+        ques_images = [img for url in image_urls.get("ques_imgs", []) if (img := image_processor.download_image(self.session, url))]
+        
+        if not main_image:
+            self.logger.error("手动模式：无法下载主验证码图片。")
+            return {"success": False, "error": "Manual mode: Failed to download main captcha image.", "mode": "manual"}
+        
+        # Determine if running in a headless Linux environment
+        is_headless_linux = (sys.platform == 'linux' or sys.platform == 'linux2') and not os.environ.get('DISPLAY')
+
+        if is_headless_linux:
+            self.logger.info("检测到无头Linux环境，切换到CLI手动输入模式。")
+            # Print URLs for the user
+            print("\n请在浏览器中打开以下链接查看验证码图片。")
+            print(f"\n主图 URL:\n{image_urls['main_img']}\n")
+            if image_urls.get("ques_imgs"):
+                print("目标文字图片 URL:")
+                for i, url in enumerate(image_urls["ques_imgs"]):
+                    print(f"  {i+1}: {url}")
+            
+            # Call CLI input function
+            user_raw_coords, passtime = manual_fallback.get_user_input_cli(num_points=len(ques_images))
+            
+            if not user_raw_coords:
+                return {"success": False, "error": "User did not provide input in CLI mode.", "mode": "manual"}
+            
+            # Convert raw pixel coords to Geetest format
+            user_coords = coordinate_utils.convert_to_geetest_format(
+                user_raw_coords, container_size=(main_image.width, main_image.height)
+            )
+
+        else:
+            self.logger.info("检测到GUI环境或非Linux系统，使用GUI手动输入模式。")
+            # Call GUI input function
+            user_coords, passtime = manual_fallback.get_user_input_gui(
+                main_image=main_image,
+                ques_images=ques_images,
+                timeout=self.settings.mode_switch.manual_timeout
+            )
 
         if not user_coords:
             return {"success": False, "error": "User did not provide input or timed out.", "mode": "manual"}
