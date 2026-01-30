@@ -79,6 +79,8 @@ class GeetestConfig:
     request_timeout: int = 30
     retry_times: int = 3
     retry_delay: float = 1.0
+    user_agent: str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+    impersonate_browser: str = "chrome110" # For curl_cffi
     # RSA公钥配置
     rsa_public_key: Dict[str, str] = field(default_factory=lambda: {
         "n": "00C1E3934D1614465B33053E7F48EE4EC87B14B95EF88947713D25EECBFF7E74C7977D02DC1D9451F79DD5D1C10C29ACB6A9B4D6FB7D0A0279B6719E1772565F09AF627715919221AEF91899CAE08C0D686D748B20A3603BE2318CA6BC2B59706592A9219D0BF05C9F65023A21D2330807252AE0066D59CEEFA5F2748EA80BAB81",
@@ -181,9 +183,13 @@ class PaddleOCRTrainingConfig:
     wget -nc -P https://paddleocr.bj.bcebos.com/PP-OCRv4/chinese/ch_PP-OCRv4_rec_train.tar
     cd ./data/models && tar -xf ch_PP-OCRv4_rec_train.tar && cd ..
     """
-    model_dir: Optional[str] = "data/models/ch_PP-OCRv4_rec_train/student"  # 预训练模型目录，训练时作为起始模型
-    trained_model_dir: str = "runs/paddle_train/best_model" # 训练后模型的保存目录 (包含checkpoints)
-    inference_model_dir: str = "data/models/inference" # 新增：最终用于推理的模型目录，假设训练脚本会导出到这里
+    model_dir: Optional[str] = "data/models/ch_ppocr_mobile_v2.0_rec_train"  # 预训练模型目录，训练时作为起始模型
+    # 重命名: 训练输出的保存目录 (包含checkpoints)
+    training_output_dir: str = "runs/paddle_train/best_model"
+    inference_model_dir: str = "data/models/inference" # 最终用于推理的模型目录，假设训练脚本会导出到这里
+    # 新增: 用于恢复训练的检查点路径 (不含.pdparams扩展名)
+    resume_checkpoint_path: Optional[str] = "runs/paddle_train/best_model/best_accuracy"
+
     use_gpu: str = "GPU"
     use_angle_cls: bool = True # 是否使用角度分类器
     use_space_char: bool = False
@@ -192,7 +198,7 @@ class PaddleOCRTrainingConfig:
     epoch: int = 300
     batch_size: int = 32
     learning_rate: float = 0.001
-    max_text_length: int = 2
+    max_text_length: int = 3 # 调整为3，避免训练时RecursionError
     # 字典文件路径
     char_dict_path: str = "libs/ppocr/utils/ppocr_keys_v1.txt"
     similarity_threshold: float = 0.7 # 用于特征向量相似度匹配的阈值

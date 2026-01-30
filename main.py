@@ -100,6 +100,17 @@ def main():
     labeler_parser = subparsers.add_parser("semi_auto_labeler", help="运行半自动标注工具，为裁剪出的文字图片添加标签")
     labeler_parser.add_argument("--input-dir", default=settings.paths.trocr_dataset_dir, help="包含裁剪图片的基础目录")
     labeler_parser.add_argument("--lang", default="ch_sim,en", help="EasyOCR识别的语言列表，用逗号分隔")
+    labeler_parser.add_argument(
+        "--save-mode", 
+        default="single", 
+        choices=['single', 'consolidated'],
+        help="保存模式: 'single' (一图一文件) 或 'consolidated' (PaddleOCR 格式)。"
+    )
+    labeler_parser.add_argument(
+        "--output-dir",
+        default="data/dataset/paddle_labeled",
+        help="'consolidated' 模式下，保存 rec_gt_... .txt 文件的目录。"
+    )
 
     # --- 模型评估命令 ---
     eval_parser = subparsers.add_parser("evaluate", help="评估模型在验证集上的性能")
@@ -248,7 +259,9 @@ def main():
             lang_list = [lang.strip() for lang in args.lang.split(',')]
             result = semi_auto_labeler.run_semi_auto_labeler(
                 input_base_dir=args.input_dir,
-                lang_list=lang_list
+                lang_list=lang_list,
+                save_mode=args.save_mode,
+                output_dir=args.output_dir
             )
             if result["success"]:
                 print(result["message"])

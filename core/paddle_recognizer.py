@@ -44,7 +44,7 @@ class PaddleRecognizer:
 
         # Placeholder for the feature extraction model, loaded on demand
         self.feature_extractor = None
-        self.feature_extractor_checkpoint = self.ocr_cfg.trained_model_dir # e.g., "runs/paddle_train/best_model"
+        self.feature_extractor_checkpoint = self.ocr_cfg.training_output_dir # e.g., "runs/paddle_train/best_model"
 
     def _load_feature_extractor(self):
         """Lazy-loads the model for feature extraction."""

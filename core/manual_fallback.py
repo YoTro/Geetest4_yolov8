@@ -1,4 +1,4 @@
-"人工降级模块 - 提供 GUI 和 CLI 两种手动输入方式"
+"""人工降级模块 - 提供 GUI 和 CLI 两种手动输入方式"""
 import os
 import sys
 import time

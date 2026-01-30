@@ -12,7 +12,7 @@ Global:
   character_dict_path: "_CHAR_DICT_PATH_"
   max_text_length: _MAX_TEXT_LENGTH_
   use_space_char: _USE_SPACE_CHAR_
-  checkpoints: 
+  checkpoints: _RESUME_CHECKPOINT_PATH_
   
 Architecture:
   model_type: rec

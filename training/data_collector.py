@@ -1,5 +1,4 @@
-"""
-数据收集器
+"""数据收集器
 使用代理池和多线程并发收集Geetest验证码图片，或通过延迟降频进行单线程收集。
 """
 import logging
@@ -8,7 +7,7 @@ import time
 from pathlib import Path
 from typing import List, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import requests
+from curl_cffi.requests import Session, get, RequestsError
 from tqdm import tqdm
 
 from config import settings
@@ -19,12 +18,12 @@ def _fetch_proxies_from_url(proxy_url: str) -> List[str]:
     """从URL获取代理列表。"""
     logger = logging.getLogger(__name__)
     try:
-        response = requests.get(proxy_url, timeout=10)
+        response = get(proxy_url, impersonate="chrome110", timeout=10)
         response.raise_for_status()
         proxies = response.text.strip().splitlines()
         logger.info(f"成功从URL加载 {len(proxies)} 个代理。")
         return [p for p in proxies if p]
-    except requests.RequestException as e:
+    except RequestsError as e:
         logger.error(f"从URL加载代理失败: {e}")
         return []
 
@@ -45,11 +44,12 @@ def _collect_single_sample(proxy: Optional[str], output_dir: list, captcha_id: s
     logger = logging.getLogger(__name__)
     session = None
     try:
-        session = requests.Session()
-        # 如果提供了代理，则为会话设置代理
+        session = Session(
+            impersonate=settings.geetest.impersonate_browser,
+            timeout=settings.geetest.request_timeout
+        )
         if proxy:
-            proxies = {"http": proxy, "https": proxy}
-            session.proxies = proxies
+            session.proxies = {"http": proxy, "https": proxy}
         
         geetest = GeetestV4(captcha_id, geetest_config=settings.geetest, session=session)
         
@@ -88,8 +88,16 @@ def _collect_single_sample(proxy: Optional[str], output_dir: list, captcha_id: s
         return True
 
     except Exception as e:
-        logger.warning(f"收集样本时发生错误 (代理: {proxy or '无'}): {e}")
+        # Check if the exception text contains content from our specific JSON decode log
+        if "JSON decode failed" in str(e):
+             # The detailed error is already logged in gt4.py, so we just log a simpler warning here
+            logger.warning(f"收集样本时发生JSON解析错误 (代理: {proxy or '无'}), 已被Cloudflare拦截。")
+        else:
+            logger.warning(f"收集样本时发生未知错误 (代理: {proxy or '无'}): {e}")
         return False
+    finally:
+        if session:
+            session.close()
 
 def run_collection_pipeline(
     num_samples: int,
@@ -108,83 +116,61 @@ def run_collection_pipeline(
     main_image_output_dir.mkdir(parents=True, exist_ok=True)
     ques_image_output_dir.mkdir(parents=True, exist_ok=True)
     image_output_dir = [main_image_output_dir, ques_image_output_dir]
-    logger.info(f"数据将保存到: {image_output_dir}")
+    logger.info(f"数据将保存到: {output_dir}")
 
-    # ---- 代理模式 ----
     if proxy_source:
         logger.info(f"检测到代理源，将使用 {max_workers} 个工作线程的代理模式。")
         
         proxies = []
-        # 检查是URL、文件还是单个代理字符串
         if proxy_source.startswith("http://") or proxy_source.startswith("https://"):
-            # 可能是代理URL列表或单个代理
-            if "\n" in requests.get(proxy_source).text: # 假设URL返回的是文本列表
-                 proxies = _fetch_proxies_from_url(proxy_source)
-            else: # 单个代理字符串
-                proxies = [proxy_source]
-                logger.info("检测到单个代理字符串。")
+            try:
+                # Test if the URL returns a list or is a single proxy
+                response = get(proxy_source, impersonate="chrome110", timeout=10)
+                response.raise_for_status()
+                if "\n" in response.text or " " in response.text:
+                    proxies = _fetch_proxies_from_url(proxy_source)
+                else:
+                    proxies = [proxy_source.strip()]
+            except RequestsError:
+                 proxies = [proxy_source.strip()] # Assume it's a single proxy if URL fetch fails
         elif Path(proxy_source).is_file():
             proxies = _fetch_proxies_from_file(Path(proxy_source))
         else:
-            # 假设为单个代理字符串
-            proxies = [proxy_source]
-            logger.info("检测到单个代理字符串。")
+            proxies = [proxy_source.strip()]
 
         if not proxies:
             logger.error("没有可用的代理，收集任务终止。")
             return
-
-        collected_count = 0
-        proxy_idx = 0
         
+        logger.info(f"加载了 {len(proxies)} 个代理。")
+
         with tqdm(total=num_samples, desc="收集中 (代理模式)") as pbar:
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = set()
-                proxy_idx = 0
-                collected_count += 1
-                while len(futures) > 0 or pbar.n < num_samples:
-                    # 动态补充任务，直到达到总数或工作线程满载
-                    while len(futures) < max_workers and pbar.n + len(futures) < num_samples:
-                        next_proxy = proxies[proxy_idx % len(proxies)]
-                        proxy_idx += 1
-                        futures.add(executor.submit(_collect_single_sample, next_proxy, image_output_dir, captcha_id))
-
-                    if not futures:
-                        break
-
-                    # 处理已完成的任务
-                    done, futures = as_completed(futures), set()
-                    
-                    for future in done:
+                futures = {executor.submit(_collect_single_sample, random.choice(proxies), image_output_dir, captcha_id) for _ in range(min(num_samples, max_workers))}
+                
+                while futures:
+                    done = set()
+                    for future in as_completed(futures):
                         if future.result():
                             pbar.update(1)
                         
-                        # 检查是否需要启动新任务
-                        if pbar.n + len(futures) < num_samples:
-                            next_proxy = proxies[proxy_idx % len(proxies)]
-                            proxy_idx += 1
-                            futures.add(executor.submit(_collect_single_sample, next_proxy, image_output_dir, captcha_id))
+                        done.add(future)
+                        
+                        if pbar.n < num_samples:
+                            # Submit a new task to replace the one that just finished
+                            new_task = executor.submit(_collect_single_sample, random.choice(proxies), image_output_dir, captcha_id)
+                            futures.add(new_task)
                     
-                    if pbar.n >= num_samples:
-                        # 取消所有剩余任务
-                        for f in futures:
-                            f.cancel()
-                        break
+                    futures -= done
     
-    # ---- 降频模式 (无代理) ----
-    else:
+    else: # Delay mode
         logger.info(f"未提供代理源，将使用单线程降频模式 (每次请求间隔约 {delay} 秒)。")
-        collected_count = 0
         with tqdm(total=num_samples, desc="收集中 (降频模式)") as pbar:
-            for i in range(num_samples):
-                success = _collect_single_sample(proxy=None, output_dir=image_output_dir, captcha_id=captcha_id)
-                if success:
-                    collected_count += 1
+            for _ in range(num_samples):
+                if _collect_single_sample(proxy=None, output_dir=image_output_dir, captcha_id=captcha_id):
                     pbar.update(1)
                 
-                # 在两次请求之间等待，避免请求过快
-                if i < num_samples - 1:
-                    sleep_time = delay + random.uniform(-1.0, 1.0)
-                    time.sleep(max(0.5, sleep_time)) # 保证至少等待0.5秒
+                if pbar.n < num_samples:
+                    time.sleep(max(0.5, delay + random.uniform(-1.0, 1.0)))
     
-    logger.info(f"收集任务完成！成功收集 {collected_count}/{num_samples} 个样本。")
+    logger.info(f"收集任务完成！")

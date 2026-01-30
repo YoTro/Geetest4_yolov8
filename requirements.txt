@@ -16,3 +16,4 @@ accelerate>=0.26.0
 paddleocr==2.8.0
 lmdb
 rapidfuzz
+curl-cffi>=0.6.0
