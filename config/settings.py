@@ -24,8 +24,9 @@ class PathConfig:
     yolo_dataset_dir: str = "data/dataset/yolo"
     paddle_dataset_dir: str = "data/dataset/paddle"
     trocr_dataset_dir: str = "data/dataset/trocr"
-    synthetic_trocr_data_dir: str = "data/raw/synthetic_trocr_data" # New path for synthetic data output
-    background_images_dir: str = "data/raw/backgrounds" # New path for background images
+    synthetic_trocr_data_dir: str = "data/raw/synthetic_trocr_data"
+    background_images_dir: str = "data/raw/backgrounds"
+    debug_output_dir: str = "logs/debug_output" # NEW: Directory for saving debug images
     
     log_dir: str = "logs"
     runs_dir: str = "runs/detect" # For YOLO training outputs
@@ -52,8 +53,9 @@ class PathConfig:
         os.makedirs(os.path.join(self.base_dir, self.yolo_dataset_dir), exist_ok=True)
         os.makedirs(os.path.join(self.base_dir, self.paddle_dataset_dir), exist_ok=True)
         os.makedirs(os.path.join(self.base_dir, self.trocr_dataset_dir), exist_ok=True)
-        os.makedirs(os.path.join(self.base_dir, self.synthetic_trocr_data_dir), exist_ok=True) # Create synthetic data output dir
-        os.makedirs(os.path.join(self.base_dir, self.background_images_dir), exist_ok=True) # Create background images dir
+        os.makedirs(os.path.join(self.base_dir, self.synthetic_trocr_data_dir), exist_ok=True)
+        os.makedirs(os.path.join(self.base_dir, self.background_images_dir), exist_ok=True)
+        os.makedirs(os.path.join(self.base_dir, self.debug_output_dir), exist_ok=True) # NEW: Create debug output dir
         os.makedirs(os.path.join(self.base_dir, self.log_dir), exist_ok=True)
         os.makedirs(os.path.join(self.base_dir, self.runs_dir), exist_ok=True)
 
@@ -228,7 +230,7 @@ class Settings:
     
     # 根级运行时配置
     debug_mode: bool = False
-    save_debug_images: bool = False
+    save_debug_images: bool = True
 
     def __post_init__(self):
         """在初始化后执行, 确保目录存在"""

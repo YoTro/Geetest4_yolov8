@@ -189,6 +189,23 @@ class CaptchaProcessor:
                     self.logger.warning("未能为待匹配项生成有效的特征向量。")
 
         # --- 5. 最终验证 ---
+        # Debugging: Draw and save click points if enabled
+        if self.settings.save_debug_images:
+            debug_output_path = os.path.join(self.settings.paths.base_dir, self.settings.paths.debug_output_dir)
+            if not os.path.exists(debug_output_path):
+                os.makedirs(debug_output_path) # Ensure directory exists
+            
+            self.logger.info(f"保存调试图片到: {debug_output_path}")
+            annotated_image = image_processor.draw_points_on_image(main_image, final_coords, ques_images=ques_images)
+            
+            # Generate a unique filename
+            timestamp = int(time.time())
+            filename = f"debug_image_{timestamp}.png"
+            save_path = os.path.join(debug_output_path, filename)
+            
+            annotated_image.save(save_path)
+            self.logger.info(f"调试图片已保存至: {save_path}")
+
         if any(c is None for c in final_coords):
             self.logger.error(f"所有策略处理完毕，但未能为所有目标字符找到坐标。最终坐标: {final_coords}")
             return {"success": False, "error": "Could not find coordinates for all target characters.", "mode": "auto"}

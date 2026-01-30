@@ -102,3 +102,76 @@ def base64_to_image(base64_str: str) -> Image.Image:
     """
     img_data = base64.b64decode(base64_str)
     return Image.open(io.BytesIO(img_data)).convert('RGB')
+
+def draw_points_on_image(img: Image.Image, points: list[Tuple[int, int]], ques_images: Optional[list[Image.Image]] = None) -> Image.Image:
+    """
+    在图片上绘制带编号的点击点，并可选地将ques图片拼接在顶部。
+    """
+    # Define colors and fonts
+    BG_COLOR = (240, 240, 240) # Light grey background
+    POINT_COLOR = (255, 0, 0) # Red
+    TEXT_COLOR = (255, 255, 255) # White
+    
+    ques_section_height = 0
+    composite_width = img.width
+
+    # --- Create Composite Image if ques_images are provided ---
+    if ques_images:
+        # Assuming all ques images have similar height
+        ques_height = max(q.height for q in ques_images) if ques_images else 0
+        padding = 10
+        ques_section_height = ques_height + 2 * padding
+        
+        # Determine width for the ques section
+        total_ques_width = sum(q.width for q in ques_images) + padding * (len(ques_images) + 1)
+        composite_width = max(img.width, total_ques_width)
+        
+        # Create a new blank canvas
+        composite_height = img.height + ques_section_height
+        composite_img = Image.new("RGB", (composite_width, composite_height), BG_COLOR)
+        
+        # Paste ques images at the top
+        current_x = padding
+        for i, q_img in enumerate(ques_images):
+            composite_img.paste(q_img, (current_x, padding))
+            # Draw number on the ques image
+            q_np = np.array(composite_img)
+            text = str(i + 1)
+            # Simple text draw on numpy array with OpenCV for simplicity
+            (text_w, text_h), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
+            text_x, text_y = current_x + 5, padding + text_h + 5
+            cv2.putText(q_np, text, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,0,0), 4, cv2.LINE_AA) # Black outline
+            cv2.putText(q_np, text, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, TEXT_COLOR, 2, cv2.LINE_AA)
+            composite_img = Image.fromarray(q_np)
+            current_x += q_img.width + padding
+        
+        # Paste main image below the ques section
+        main_img_x_offset = (composite_width - img.width) // 2
+        composite_img.paste(img, (main_img_x_offset, ques_section_height))
+        
+        # Final image to draw on is the composite one
+        final_img_to_draw = composite_img
+    else:
+        final_img_to_draw = img.copy()
+        main_img_x_offset = 0
+
+    # --- Draw Numbered Points on the Main Image Area ---
+    img_np = np.array(final_img_to_draw.convert("RGB"))
+    
+    for i, (x, y) in enumerate(points):
+        # Adjust coordinates to the composite image frame
+        draw_x = int(x) + main_img_x_offset
+        draw_y = int(y) + ques_section_height
+        
+        # Draw circle
+        cv2.circle(img_np, (draw_x, draw_y), radius=10, color=POINT_COLOR, thickness=-1)
+        
+        # Draw number inside the circle
+        text = str(i + 1)
+        (text_w, text_h), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+        text_x = draw_x - text_w // 2
+        text_y = draw_y + text_h // 2
+        cv2.putText(img_np, text, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, TEXT_COLOR, 2, cv2.LINE_AA)
+
+    return Image.fromarray(img_np)
+
