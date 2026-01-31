@@ -5,6 +5,7 @@
 import os
 import sys
 import time
+import random
 import logging
 import requests
 import numpy as np
@@ -68,7 +69,8 @@ class CaptchaProcessor:
         load_data = self.geetest.load(captcha_id=captcha_id or self.settings.geetest.captcha_id, **kwargs)
         if load_data.get("status") != "success":
             return {"success": False, "error": "Failed to load captcha", "details": load_data}
-
+        # 随机延迟
+        time.sleep(max(0.5, 3 + random.uniform(-1.0, 1.0)))
         # 根据当前模式选择处理方式
         if self.current_mode == "auto":
             result = self._process_auto(load_data)
@@ -104,37 +106,38 @@ class CaptchaProcessor:
 
         # --- 2. 识别所有相关文字 ---
         self.logger.info("--- 步骤 1: 识别 'ques' 图片和检测区域 ---")
-        # 将原始索引附加到每个ques图片
         ques_data = [{'index': i, 'image': img} for i, img in enumerate(ques_images)]
         
-        # 运行OCR并存储结果
         for item in ques_data:
-            item['char'] = self.ocr_recognizer.recognize(item['image'])
-            self.logger.info(f"Ques {item['index']}: 文本识别结果 -> '{item['char']}'")
+            text, score = self.ocr_recognizer.recognize(item['image'])
+            item['char'] = text[0] if text else '' # Only take the first char for ques images
+            item['score'] = score
+            self.logger.info(f"Ques {item['index']}: 文本识别结果 -> '{item['char']}' (置信度: {item['score']:.2f}, 原始识别: '{text}')")
 
         for i, det in enumerate(detections):
-            det['det_index'] = i # Add original index to detections
-            det['char'] = self.ocr_recognizer.recognize(main_image.crop(det['bbox']))
-            self.logger.debug(f"Det {det['det_index']}: 文本识别结果 -> '{det['char']}'")
+            det['det_index'] = i
+            det['char'], det['score'] = self.ocr_recognizer.recognize(main_image.crop(det['bbox']))
+            self.logger.debug(f"Det {det['det_index']}: 文本识别结果 -> '{det['char']}' (置信度: {det['score']:.2f})")
 
         # --- 3. 优先执行文本匹配 ---
         self.logger.info("--- 步骤 2: 优先执行文本匹配 ---")
         final_coords = [None] * len(ques_data)
-        matched_det_indices = set()
-        unmatched_ques = []
+        matched_det_indices = set() # 追踪已被匹配的检测区域的原始索引
+        
+        min_ocr_confidence_for_text_match = settings.ocr.paddle.min_auto_confidence # Use the same confidence for text matching
 
-        # 创建可用的检测区域 multi-map: char -> list of detection objects
         available_dets_map = defaultdict(list)
         for det in detections:
-            if det['char'] and len(det['char']) == 1:
+            # Only consider detections with single char and sufficient confidence for text matching
+            if det['char'] and len(det['char']) == 1 and det['score'] >= min_ocr_confidence_for_text_match:
                 available_dets_map[det['char']].append(det)
 
         for ques_item in ques_data:
             char_to_find = ques_item['char']
             is_match_found = False
-            if char_to_find and len(char_to_find) == 1:
+            # Only attempt text matching if the ques OCR also resulted in a single character with sufficient confidence
+            if char_to_find and len(char_to_find) == 1 and ques_item['score'] >= min_ocr_confidence_for_text_match:
                 if available_dets_map[char_to_find]:
-                    # 从左到右排序可用的检测
                     sorted_dets = sorted(available_dets_map[char_to_find], key=lambda d: d['center'][0])
                     for det_candidate in sorted_dets:
                         if det_candidate['det_index'] not in matched_det_indices:
@@ -146,59 +149,78 @@ class CaptchaProcessor:
                             break
             
             if not is_match_found:
-                unmatched_ques.append(ques_item)
-        
+                # If text matching was not even attempted (e.g., ques OCR was bad) or it failed
+                pass # This ques_item will remain None in final_coords and be picked up by similarity matching
+
+
         # --- 4. 对所有未匹配项进行相似度匹配 ---
-        if unmatched_ques:
-            self.logger.info(f"--- 步骤 3: 对 {len(unmatched_ques)} 个剩余字符执行相似度匹配 ---")
+        unmatched_ques_for_similarity = []
+        for ques_item in ques_data:
+            if final_coords[ques_item['index']] is None:
+                unmatched_ques_for_similarity.append(ques_item)
+        
+        if unmatched_ques_for_similarity:
+            self.logger.info(f"--- 步骤 3: 对 {len(unmatched_ques_for_similarity)} 个剩余字符执行相似度匹配 ---")
             if self.settings.ocr.engine != 'paddle':
                  return {"success": False, "error": "Similarity matching fallback requires PaddleOCR engine.", "mode": "auto"}
 
-            # 筛选出未被文本匹配占用的检测区域
-            remaining_dets = [d for d in detections if d['det_index'] not in matched_det_indices]
+            remaining_det_items = [d for d in detections if d['det_index'] not in matched_det_indices]
             
-            if not remaining_dets:
+            if not remaining_det_items:
                 self.logger.error("相似度匹配失败：没有剩余的检测区域可供匹配。")
-            elif len(remaining_dets) < len(unmatched_ques):
-                self.logger.warning(f"相似度匹配：剩余检测区域 ({len(remaining_dets)}) 少于待匹配目标 ({len(unmatched_ques)})。")
-            else:
-                ques_embeddings = [{'orig_index': item['index'], 'embedding': self.ocr_recognizer.get_embedding(item['image'])} for item in unmatched_ques]
-                det_embeddings = [{'center': d['center'], 'det_index': d['det_index'], 'embedding': self.ocr_recognizer.get_embedding(main_image.crop(d['bbox']))} for d in remaining_dets]
+            elif len(remaining_det_items) < len(unmatched_ques_for_similarity):
+                self.logger.warning(f"相似度匹配：剩余检测区域 ({len(remaining_det_items)}) 少于待匹配目标 ({len(unmatched_ques_for_similarity)})。")
+            
+            # Get embeddings for unmatched ques and remaining detections
+            ques_embeddings = [] # store {'orig_index', 'embedding'}
+            for item in unmatched_ques_for_similarity:
+                embedding = self.ocr_recognizer.get_embedding(item['image'])
+                if embedding is not None:
+                    ques_embeddings.append({'orig_index': item['index'], 'embedding': embedding})
+                else:
+                    self.logger.warning(f"未能为 Ques {item['index']} 提取特征向量，跳过相似度匹配。")
 
-                ques_embeddings = [e for e in ques_embeddings if e['embedding'] is not None]
-                det_embeddings = [e for e in det_embeddings if e['embedding'] is not None]
+            det_embeddings = [] # store {'center', 'det_index', 'embedding'}
+            for det_item in remaining_det_items:
+                embedding = self.ocr_recognizer.get_embedding(main_image.crop(det_item['bbox']))
+                if embedding is not None:
+                    det_embeddings.append({'center': det_item['center'], 'det_index': det_item['det_index'], 'embedding': embedding})
+                else:
+                    self.logger.warning(f"未能为 Det {det_item['det_index']} 提取特征向量，跳过相似度匹配。")
 
-                if ques_embeddings and det_embeddings:
-                    similarity_threshold = self.settings.ocr.paddle.similarity_threshold
-                    cost_matrix = np.full((len(ques_embeddings), len(det_embeddings)), 2.0)
-                    for i in range(len(ques_embeddings)):
-                        for j in range(len(det_embeddings)):
-                            sim = cosine_similarity(ques_embeddings[i]['embedding'], det_embeddings[j]['embedding'])
-                            if sim >= similarity_threshold:
-                                cost_matrix[i, j] = 1 - sim
+            if ques_embeddings and det_embeddings:
+                similarity_threshold = settings.ocr.paddle.similarity_threshold
+                cost_matrix = np.full((len(ques_embeddings), len(det_embeddings)), 2.0)
+                for i in range(len(ques_embeddings)):
+                    for j in range(len(det_embeddings)):
+                        sim = cosine_similarity(ques_embeddings[i]['embedding'], det_embeddings[j]['embedding'])
+                        if sim >= similarity_threshold:
+                            cost_matrix[i, j] = 1 - sim
                     
-                    row_ind, col_ind = scipy.optimize.linear_sum_assignment(cost_matrix)
+                row_ind, col_ind = scipy.optimize.linear_sum_assignment(cost_matrix)
 
-                    for r, c in zip(row_ind, col_ind):
-                        if cost_matrix[r, c] < 1.0:
+                for r, c in zip(row_ind, col_ind):
+                    if cost_matrix[r, c] < 1.0:
                             original_ques_index = ques_embeddings[r]['orig_index']
                             matched_center = det_embeddings[c]['center']
                             final_coords[original_ques_index] = matched_center
+                            matched_det_indices.add(det_embeddings[c]['det_index']) # Mark as used
                             self.logger.info(f"相似度匹配: Ques {original_ques_index} -> 坐标 {matched_center}")
-                else:
-                    self.logger.warning("未能为待匹配项生成有效的特征向量。")
+            else:
+                self.logger.warning("未能为待匹配项生成有效的特征向量。")
 
         # --- 5. 最终验证 ---
         # Debugging: Draw and save click points if enabled
-        if self.settings.save_debug_images:
-            debug_output_path = os.path.join(self.settings.paths.base_dir, self.settings.paths.debug_output_dir)
+        if settings.save_debug_images:
+            debug_output_path = os.path.join(settings.paths.base_dir, settings.paths.debug_output_dir)
             if not os.path.exists(debug_output_path):
-                os.makedirs(debug_output_path) # Ensure directory exists
+                os.makedirs(debug_output_path)
             
             self.logger.info(f"保存调试图片到: {debug_output_path}")
-            annotated_image = image_processor.draw_points_on_image(main_image, final_coords, ques_images=ques_images)
+            # Ensure final_coords does not contain None before drawing
+            valid_coords = [p for p in final_coords if p is not None]
+            annotated_image = image_processor.draw_points_on_image(main_image, valid_coords, ques_images=ques_images)
             
-            # Generate a unique filename
             timestamp = int(time.time())
             filename = f"debug_image_{timestamp}.png"
             save_path = os.path.join(debug_output_path, filename)
@@ -227,17 +249,17 @@ class CaptchaProcessor:
         ques_images = [img for url in image_urls.get("ques_imgs", []) if (img := image_processor.download_image(self.session, url))]
         
         if not main_image:
-            self.logger.error("手动模式：无法下载主验证码图片。")
+            self.logger.error("手动模式：无法下载主验证码图片。" )
             return {"success": False, "error": "Manual mode: Failed to download main captcha image.", "mode": "manual"}
         
         # Determine if running in a headless Linux environment
         is_headless_linux = (sys.platform == 'linux' or sys.platform == 'linux2') and not os.environ.get('DISPLAY')
 
         if is_headless_linux:
-            self.logger.info("检测到无头Linux环境，切换到CLI手动输入模式。")
+            self.logger.info("检测到无头Linux环境，切换到CLI手动输入模式。" )
             # Print URLs for the user
-            print("\n请在浏览器中打开以下链接查看验证码图片。")
-            print(f"\n主图 URL:\n{image_urls['main_img']}\n")
+            print("\n请在浏览器中打开以下链接查看验证码图片。" )
+            print(f"\n主图 URL:\n{image_urls['main_img']}\n" )
             if image_urls.get("ques_imgs"):
                 print("目标文字图片 URL:")
                 for i, url in enumerate(image_urls["ques_imgs"]):
@@ -255,7 +277,7 @@ class CaptchaProcessor:
             )
 
         else:
-            self.logger.info("检测到GUI环境或非Linux系统，使用GUI手动输入模式。")
+            self.logger.info("检测到GUI环境或非Linux系统，使用GUI手动输入模式。" )
             # Call GUI input function
             user_coords, passtime = manual_fallback.get_user_input_gui(
                 main_image=main_image,
@@ -279,45 +301,20 @@ class CaptchaProcessor:
                 self.consecutive_auto_failures = 0
             else:
                 self.consecutive_auto_failures += 1
-                self.logger.warning(f"自动模式连续失败 {self.consecutive_auto_failures} 次。")
+                self.logger.warning(f"自动模式连续失败 {self.consecutive_auto_failures} 次。" )
                 if self.consecutive_auto_failures >= self.settings.mode_switch.max_auto_failures:
                     self.current_mode = "manual"
-                    self.logger.error(f"自动模式失败达到阈值，切换到手动模式。")
+                    self.logger.error(f"自动模式失败达到阈值，切换到手动模式。" )
                     self.consecutive_auto_failures = 0
         
         elif self.current_mode == "manual":
             if success:
                 self.consecutive_manual_successes += 1
-                self.logger.info(f"手动模式连续成功 {self.consecutive_manual_successes} 次。")
+                self.logger.info(f"手动模式连续成功 {self.consecutive_manual_successes} 次。" )
                 if self.consecutive_manual_successes >= self.settings.mode_switch.min_success_for_switch:
                     self.current_mode = "auto"
-                    self.logger.info(f"手动模式成功达到阈值，切换回自动模式。")
+                    self.logger.info(f"手动模式成功达到阈值，切换回自动模式。" )
                     self.consecutive_manual_successes = 0
             else:
                 self.consecutive_manual_successes = 0
 
-    def _calculate_click_coords(self, detections: List[Dict], target_chars: List[str]) -> List[Tuple[int, int]]:
-        """根据检测结果和目标文字计算点击坐标。"""
-        sorted_detections = sorted(detections, key=lambda d: d['bbox'][0])
-        
-        char_map = defaultdict(list)
-        for det in sorted_detections:
-            char_map[det['class_name']].append(det['center'])
-            
-        click_coords = []
-        for char in target_chars:
-            if char_map[char]:
-                click_coords.append(char_map[char].pop(0))
-        
-        return click_coords
-
-    def _generate_random_click_coords(self, num_coords: int, image_size: Tuple[int, int]) -> List[Tuple[int, int]]:
-        """
-        生成随机点击坐标（仅用于调试流程）。
-        """
-        random_coords = []
-        width, height = image_size
-        import random
-        for _ in range(num_coords):
-            random_coords.append((random.randint(int(width * 0.1), int(width * 0.9)), random.randint(int(height * 0.1), int(height * 0.9))))
-        return random_coords

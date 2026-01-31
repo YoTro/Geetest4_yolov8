@@ -24,8 +24,9 @@ class PathConfig:
     yolo_dataset_dir: str = "data/dataset/yolo"
     paddle_dataset_dir: str = "data/dataset/paddle"
     trocr_dataset_dir: str = "data/dataset/trocr"
-    synthetic_trocr_data_dir: str = "data/raw/synthetic_trocr_data"
+    synthetic_ques_data_dir: str = "data/raw/synthetic_ques_data"
     background_images_dir: str = "data/raw/backgrounds"
+    template_dir: str = "data/templates" # NEW: Directory for template images
     debug_output_dir: str = "logs/debug_output" # NEW: Directory for saving debug images
     
     log_dir: str = "logs"
@@ -53,7 +54,7 @@ class PathConfig:
         os.makedirs(os.path.join(self.base_dir, self.yolo_dataset_dir), exist_ok=True)
         os.makedirs(os.path.join(self.base_dir, self.paddle_dataset_dir), exist_ok=True)
         os.makedirs(os.path.join(self.base_dir, self.trocr_dataset_dir), exist_ok=True)
-        os.makedirs(os.path.join(self.base_dir, self.synthetic_trocr_data_dir), exist_ok=True)
+        os.makedirs(os.path.join(self.base_dir, self.synthetic_ques_data_dir), exist_ok=True)
         os.makedirs(os.path.join(self.base_dir, self.background_images_dir), exist_ok=True)
         os.makedirs(os.path.join(self.base_dir, self.debug_output_dir), exist_ok=True) # NEW: Create debug output dir
         os.makedirs(os.path.join(self.base_dir, self.log_dir), exist_ok=True)
@@ -179,16 +180,18 @@ class TrOCRTrainingConfig:
 @dataclass
 class PaddleOCRTrainingConfig:
     """PaddleOCR模型训练配置
-    预训练模型下载
+    预训练模型下载 https://github.com/PaddlePaddle/PaddleOCR/blob/release/2.7/doc/doc_ch/models_list.md
     wget -nc -P https://paddleocr.bj.bcebos.com/PP-OCRv4/chinese/ch_PP-OCRv4_rec_train.tar
     cd ./data/models && tar -xf ch_PP-OCRv4_rec_train.tar && cd ..
     """
-    model_dir: Optional[str] = "data/models/ch_ppocr_mobile_v2.0_rec_train"  # 预训练模型目录，训练时作为起始模型
-    # 重命名: 训练输出的保存目录 (包含checkpoints)
+    model_dir: Optional[str] = "data/models/ch_PP-OCRv4_rec_train"  # 预训练模型目录，训练时作为起始模型
+    # 训练输出的保存目录 (包含checkpoints)
     training_output_dir: str = "runs/paddle_train/best_model"
-    inference_model_dir: str = "data/models/inference" # 最终用于推理的模型目录，假设训练脚本会导出到这里
-    # 新增: 用于恢复训练的检查点路径 (不含.pdparams扩展名)
-    resume_checkpoint_path: Optional[str] = "runs/paddle_train/best_model/best_accuracy"
+    inference_model_dir: str = "data/models/inference" # 最终用于推理的模型目录
+    # 用于相似度匹配/特征提取的特定模型检查点路径 (不含.pdparams扩展名)
+    feature_extraction_checkpoint: Optional[str] = None 
+    # 用于恢复训练的检查点路径 (不含.pdparams扩展名)
+    resume_checkpoint_path: Optional[str] = None # 假设训练脚本会导出到这里
 
     use_gpu: str = "GPU"
     use_angle_cls: bool = True # 是否使用角度分类器
@@ -198,10 +201,11 @@ class PaddleOCRTrainingConfig:
     epoch: int = 300
     batch_size: int = 32
     learning_rate: float = 0.001
-    max_text_length: int = 3 # 调整为3，避免训练时RecursionError
+    max_text_length: int = 2 # 调整为3，避免训练时RecursionError
     # 字典文件路径
     char_dict_path: str = "libs/ppocr/utils/ppocr_keys_v1.txt"
     similarity_threshold: float = 0.7 # 用于特征向量相似度匹配的阈值
+    min_auto_confidence: float = 0.85 # NEW: 自动标注的最低置信度
 
 @dataclass
 class OCRConfig:

@@ -40,7 +40,7 @@ def main():
     recognize_parser = subparsers.add_parser("recognize", help="使用OCR模型识别图像中的文本")
     recognize_parser.add_argument("--image", required=True, help="要识别的图像文件的路径")
     recognize_parser.add_argument("--engine", default="trocr", choices=["trocr", "paddle"], help="要使用的OCR引擎 (默认: trocr)")
-    recognize_parser.add_argument("--model", default="microsoft/trocr-base-stage1", help="要使用的TrOCR模型名称 (仅当 engine='trocr' 时有效)")
+    recognize_parser.add_argument("--model", default="microsoft/trocr-base-stage1", help="TrOCR要使用的TrOCR模型名称，Paddle使用导出后的推理模型路径例如：data/models/inference")
 
     # --- 验证命令 ---
     process_parser = subparsers.add_parser("run", help="运行验证码处理器，处理单个验证码")
@@ -264,7 +264,8 @@ def main():
                 output_dir=args.output_dir
             )
             if result["success"]:
-                print(result["message"])
+                # The new semi_auto_labeler already logs the summary, so just print a confirmation.
+                print("半自动标注流程已执行。请查看上面的日志获取详细摘要。")
             else:
                 print(f"半自动标注失败: {result['error']}")
             logger.info("--- 半自动标注完成 ---")

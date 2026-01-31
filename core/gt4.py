@@ -7,7 +7,7 @@ import os
 import time
 import random
 import logging
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 from curl_cffi.requests import Session, Response
 from Crypto.PublicKey import RSA
 from Crypto.Cipher import AES, PKCS1_v1_5
@@ -48,7 +48,7 @@ class GeetestV4:
         
         self.symmetric_key = self._generate_symmetric_key()
         
-        self.logger.info(f"GeetestV4 initialized for captcha_id: {self.captcha_id} with curl_cffi impersonating {self.geetest_config.impersonate_browser}")
+        #self.logger.info(f"GeetestV4 initialized for captcha_id: {self.captcha_id} with curl_cffi impersonating {self.geetest_config.impersonate_browser}")
 
     def _get_default_headers(self) -> dict:
         """获取默认请求头"""
@@ -161,7 +161,7 @@ class GeetestV4:
         iv_bytes = iv_str.encode('utf-8')
         cipher = AES.new(key_bytes, AES.MODE_CBC, iv_bytes)
         ct = cipher.encrypt(pad(plaintext.encode(), 16))
-        return list(ct)
+        return List(ct)
 
     def generate_w_data(self, load_response_data: Dict, passtime: int, userresponse: List[List[int]], device_id: str = "") -> Dict[str, str]:
         parsed_data = self.parse_load_response(load_response_data)
@@ -190,7 +190,7 @@ class GeetestV4:
     def _generate_pow_msg(self, lot_number: str, pow_detail: Dict) -> str:
         return f"{pow_detail.get('version','1')}|{pow_detail.get('bits',8)}|{pow_detail.get('hashfunc','sha256')}|{pow_detail['datetime']}|{self.captcha_id}|{lot_number}||"
 
-    def _generate_pow_sign(self, pow_msg: str, bits: int) -> tuple[str, str]:
+    def _generate_pow_sign(self, pow_msg: str, bits: int) -> Tuple[str, str]:
         base_bytes = pow_msg.encode('utf-8')
         target_prefix = "0" * (bits // 4)
         

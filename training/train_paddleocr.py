@@ -49,8 +49,8 @@ def train_paddle_model(
     train_data_dir = Path(train_label_file).parent.resolve().as_posix()
     val_data_dir = Path(val_label_file).parent.resolve().as_posix()
     char_dict_path = (Path(path_config.base_dir) / config.char_dict_path).resolve().as_posix()
-    # 使用重命名后的 training_output_dir
-    save_model_dir = (Path(path_config.base_dir) / config.training_output_dir).resolve().as_posix()
+    # 使用重命名后的 training_output_root_dir
+    save_model_dir = (Path(path_config.base_dir) / config.training_output_root_dir).resolve().as_posix()
     
     config_dir = Path(path_config.base_dir) / "config"
     config_dir.mkdir(exist_ok=True)
