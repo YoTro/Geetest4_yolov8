@@ -21,6 +21,7 @@ from utils import image_processor, coordinate_utils
 from . import yolo_inference, manual_fallback
 from .trocr_recognizer import TrOCRRecognizer
 from .paddle_recognizer import PaddleRecognizer, cosine_similarity
+from .match_ques_features import ImageMatcher # NEW: 导入 ImageMatcher
 
 class CaptchaProcessor:
     """
@@ -52,13 +53,12 @@ class CaptchaProcessor:
             self.logger.error(f"不支持的OCR引擎: {self.settings.ocr.engine}。请检查config/settings.py。")
             self.ocr_recognizer = None
 
-        # 状态管理
-        self.current_mode = "auto"
-        self.consecutive_auto_failures = 0
-        self.consecutive_manual_successes = 0
-
+        # NEW: 初始化 ImageMatcher 用于 ques 图片识别
+        self.image_matcher = ImageMatcher()
+        if not self.image_matcher.dictionary:
+            self.logger.warning("ImageMatcher 字典为空。ques 图片识别可能依赖 OCR 引擎或字典生成失败。")
         self.logger.info("验证码处理器初始化完成。")
-
+        self.consecutive_auto_failures = 0
     def process(self, captcha_id: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         """
         处理验证码的主入口点。
@@ -109,10 +109,26 @@ class CaptchaProcessor:
         ques_data = [{'index': i, 'image': img} for i, img in enumerate(ques_images)]
         
         for item in ques_data:
+            # 优先使用 ImageMatcher 识别 ques 图片
+            if self.image_matcher.dictionary:
+                char, score = self.image_matcher.find_best_match(
+                    item['image'], self.settings.image_matcher.default_weights
+                )
+                if char and score >= self.settings.image_matcher.min_match_score:
+                    item['char'] = char
+                    item['score'] = score
+                    self.logger.info(f"Ques {item['index']}: ImageMatcher 识别结果 -> '{item['char']}' (得分: {item['score']:.4f})")
+                    continue # 成功匹配，跳过OCR回退
+                else:
+                    self.logger.warning(f"Ques {item['index']}: ImageMatcher 失败或得分过低 ({score:.4f} < {self.settings.image_matcher.min_match_score:.4f})，回退到 OCR 识别。")
+            else:
+                self.logger.warning(f"Ques {item['index']}: ImageMatcher 字典未加载，直接使用 OCR 识别。")
+            
+            # 回退到 OCR 识别
             text, score = self.ocr_recognizer.recognize(item['image'])
             item['char'] = text[0] if text else '' # Only take the first char for ques images
             item['score'] = score
-            self.logger.info(f"Ques {item['index']}: 文本识别结果 -> '{item['char']}' (置信度: {item['score']:.2f}, 原始识别: '{text}')")
+            self.logger.info(f"Ques {item['index']}: OCR 识别结果 -> '{item['char']}' (置信度: {item['score']:.2f}, 原始识别: '{text}')")
 
         for i, det in enumerate(detections):
             det['det_index'] = i

@@ -4,16 +4,18 @@ import json
 import random
 import platform
 import numpy as np
+from pathlib import Path
 from tqdm import tqdm
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageChops
 from config.settings import settings
+from utils.text_drawing_utils import get_system_font_path, get_chinese_chars_from_unicode_range # NEW: Import char generator
 
 class TrOCRDataGenerator:
     def __init__(self, num_images: int, device: str = "cpu"):
         self.num_images = num_images
         
         # Output directory for generated synthetic data
-        self.output_dir = os.path.join(settings.paths.base_dir, settings.paths.synthetic_trocr_data_dir)
+        self.output_dir = os.path.join(settings.paths.base_dir, settings.paths.synthetic_ques_data_dir)
         self.image_dir = os.path.join(self.output_dir, "images")
         self.label_file = os.path.join(self.output_dir, "labels.jsonl") # Changed from metadata.jsonl for consistency
 
@@ -21,9 +23,9 @@ class TrOCRDataGenerator:
         self.background_dir = os.path.join(settings.paths.base_dir, settings.paths.background_images_dir)
         
         self.device = device
-        self.font_path = self._get_system_font()
+        self.font_path = get_system_font_path('SimHei') # NEW: Use the utility function
         # --- 使用 Unicode 范围生成字符集 ---
-        self.char_set = self._get_chinese_chars_from_unicode_range()
+        self.char_set = get_chinese_chars_from_unicode_range()
         self.background_images = [
             os.path.join(self.background_dir, f)
             for f in os.path.listdir(self.background_dir)
@@ -36,38 +38,9 @@ class TrOCRDataGenerator:
         # Ensure labels.jsonl parent directory exists
         Path(self.label_file).parent.mkdir(parents=True, exist_ok=True)
 
-    def _get_system_font(self):
-        system = platform.system()
-        paths = {
-            "Darwin": ["/System/Library/Fonts/STHeiti Medium.ttc"],
-            "Windows": ["C:/Windows/Fonts/msyh.ttc"],
-            "Linux": ["/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"]
-        }.get(system, [])
-        for path in paths:
-            if os.path.exists(path): return path
-        return None
 
-    def _get_chinese_chars_from_unicode_range(self):
-        """
-        # CJK 统一汉字 (Common CJK Unified Ideographs) 块
-        # 仅取 U+4E00 到 U+9FA5 的汉字，覆盖简体汉字
-        """
-        chars = []
-        start_code = 0x4E00
-        end_code = 0x9FA5
-        
-        for code in range(start_code, end_code + 1):
-            char = chr(code)
-            # 可以在此处添加过滤条件，例如排除不常用的字，或者确保是可打印字符
-            # 对于大多数 CJK 范围内的字符，直接添加即可
-            chars.append(char)
-        
-        print(f"已从 Unicode 范围 {hex(start_code)} - {hex(end_code)} 生成 {len(chars)} 个汉字。")
-        
-        # 如果需要更小的字符集，可以在此处进行切片或进一步筛选
-        # 例如，为了控制验证码的复杂性，可以只取前 N 个或一个子集：
-        chars = chars[:3500]  # 前 3500 个最常用简体字
-        return chars
+
+
     def _find_perspective_coeffs(self, src, dst):
         # src, dst: [(x0,y0), (x1,y1), (x2,y2), (x3,y3)]
         matrix = []

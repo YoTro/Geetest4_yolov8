@@ -161,7 +161,7 @@ class GeetestV4:
         iv_bytes = iv_str.encode('utf-8')
         cipher = AES.new(key_bytes, AES.MODE_CBC, iv_bytes)
         ct = cipher.encrypt(pad(plaintext.encode(), 16))
-        return List(ct)
+        return list(ct)
 
     def generate_w_data(self, load_response_data: Dict, passtime: int, userresponse: List[List[int]], device_id: str = "") -> Dict[str, str]:
         parsed_data = self.parse_load_response(load_response_data)
