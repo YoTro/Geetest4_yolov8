@@ -24,11 +24,11 @@ class PathConfig:
     yolo_dataset_dir: str = "data/dataset/yolo"
     paddle_dataset_dir: str = "data/dataset/paddle"
     trocr_dataset_dir: str = "data/dataset/trocr"
-    synthetic_ques_data_dir: str = "data/raw/synthetic_ques_data"
+    synthetic_main_data_dir: str = "data/raw/synthetic_main_data"
     background_images_dir: str = "data/raw/backgrounds"
-    template_dir: str = "data/templates" # NEW: Directory for template images
-    debug_output_dir: str = "logs/debug_output" # NEW: Directory for saving debug images
-    
+    font_dir: str = "assets/fonts" # Directory for fonts
+    debug_output_dir: str = "logs/debug_output" #  Directory for saving debug images
+    dict_image_dir: str = "utils/dict"
     log_dir: str = "logs"
     runs_dir: str = "runs/detect" # For YOLO training outputs
     
@@ -36,6 +36,7 @@ class PathConfig:
     best_model_name: str = "best.pt"
     last_model_name: str = "last.pt"
     yolo_dataset_yaml_name: str = "dataset.yaml" # Specific to YOLO
+    char_dict_path: str = "utils/dict/character_dict.txt" # common standard chinese characters table with 8105 words
 
     def get_model_path(self, model_name: str) -> str:
         """获取模型文件的绝对路径"""
@@ -54,9 +55,11 @@ class PathConfig:
         os.makedirs(os.path.join(self.base_dir, self.yolo_dataset_dir), exist_ok=True)
         os.makedirs(os.path.join(self.base_dir, self.paddle_dataset_dir), exist_ok=True)
         os.makedirs(os.path.join(self.base_dir, self.trocr_dataset_dir), exist_ok=True)
-        os.makedirs(os.path.join(self.base_dir, self.synthetic_ques_data_dir), exist_ok=True)
+        os.makedirs(os.path.join(self.base_dir, self.synthetic_main_data_dir), exist_ok=True)
         os.makedirs(os.path.join(self.base_dir, self.background_images_dir), exist_ok=True)
         os.makedirs(os.path.join(self.base_dir, self.debug_output_dir), exist_ok=True) # NEW: Create debug output dir
+        os.makedirs(os.path.join(self.base_dir, self.dict_image_dir), exist_ok=True) # NEW: Create dict image dir
+        os.makedirs(os.path.join(self.base_dir, self.font_dir), exist_ok=True) # NEW: Create font dir
         os.makedirs(os.path.join(self.base_dir, self.log_dir), exist_ok=True)
         os.makedirs(os.path.join(self.base_dir, self.runs_dir), exist_ok=True)
 
@@ -126,7 +129,7 @@ class YOLOTrainingConfig:
     batch: int = 16
     imgsz: int = 640
     workers: int = 8
-    device: str = "cpu"
+    device: str = "cuda"
     optimizer: str = "auto"
     patience: int = 100
     save_period: int = -1
@@ -156,7 +159,7 @@ class YOLOInferenceConfig:
     iou: float = 0.45
     imgsz: int = 640
     max_det: int = 1000
-    device: str = "cpu"
+    device: str = "cpu" # cpu, cuda, ipu, xpu, mkldnn, opengl, opencl, ideep, hip, ve, fpga, ort, xla, lazy, vulkan, mps, meta, hpu, mtia
     augment: bool = False
     agnostic_nms: bool = False
     half: bool = False
@@ -181,31 +184,41 @@ class TrOCRTrainingConfig:
 class PaddleOCRTrainingConfig:
     """PaddleOCR模型训练配置
     预训练模型下载 https://github.com/PaddlePaddle/PaddleOCR/blob/release/2.7/doc/doc_ch/models_list.md
-    wget -nc -P https://paddleocr.bj.bcebos.com/PP-OCRv4/chinese/ch_PP-OCRv4_rec_train.tar
-    cd ./data/models && tar -xf ch_PP-OCRv4_rec_train.tar && cd ..
+    wget -nc -P ./PP-OCRv5_server_rec_pretrained https://paddle-model-ecology.bj.bcebos.com/paddlex/official_pretrained_model/PP-OCRv5_server_rec_pretrained.pdparams
+    cd ./data/models && tar -xf PP-OCRv5_server_rec_infer.tar && cd ..
     """
-    model_dir: Optional[str] = "data/models/ch_PP-OCRv4_rec_train"  # 预训练模型目录，训练时作为起始模型
+    model_dir: Optional[str] = "data/models/ch_PP-OCRv2_rec_infer/inference"  # 预训练模型目录，训练时作为起始模型
     # 训练输出的保存目录 (包含checkpoints)
     training_output_dir: str = "runs/paddle_train/best_model"
     inference_model_dir: str = "data/models/inference" # 最终用于推理的模型目录
     # 用于相似度匹配/特征提取的特定模型检查点路径 (不含.pdparams扩展名)
-    feature_extraction_checkpoint: Optional[str] = None 
+    feature_extraction_checkpoint: Optional[str] = "runs/paddle_train/best_model/best_accuracy" 
     # 用于恢复训练的检查点路径 (不含.pdparams扩展名)
     resume_checkpoint_path: Optional[str] = None # 假设训练脚本会导出到这里
 
-    use_gpu: str = "GPU"
+    use_gpu: str = "cpu"
     use_angle_cls: bool = True # 是否使用角度分类器
     use_space_char: bool = False
     lang: str = "ch"  # 默认语言
     # 训练超参数
-    epoch: int = 300
+    epoch: int = 80
     batch_size: int = 32
-    learning_rate: float = 0.001
-    max_text_length: int = 2 # 调整为3，避免训练时RecursionError
+    learning_rate: float = 0.0005
+    max_text_length: int = 5 # 调整为3，避免训练时RecursionError
     # 字典文件路径
-    char_dict_path: str = "libs/ppocr/utils/ppocr_keys_v1.txt"
+    char_dict_path: str = "libs/ppocr/utils/dict/ppocrv5_dict.txt"
     similarity_threshold: float = 0.7 # 用于特征向量相似度匹配的阈值
     min_auto_confidence: float = 0.85 # NEW: 自动标注的最低置信度
+
+@dataclass
+class ImageMatcherConfig:
+    """图片匹配器相关配置"""
+    default_weights: Dict[str, float] = field(default_factory=lambda: {
+        'ssim': 0.1,
+        'hog': 0.6,
+        'phash': 0.3
+    })
+    min_match_score: float = 0.5 # 最小匹配分数阈值，低于此阈值则认为匹配失败
 
 @dataclass
 class OCRConfig:
@@ -237,6 +250,7 @@ class Settings:
     yolo_training: YOLOTrainingConfig = field(default_factory=YOLOTrainingConfig)
     yolo_inference: YOLOInferenceConfig = field(default_factory=YOLOInferenceConfig)
     ocr: OCRConfig = field(default_factory=OCRConfig)
+    image_matcher: ImageMatcherConfig = field(default_factory=ImageMatcherConfig) # NEW: ImageMatcher config
     
     # 根级运行时配置
     debug_mode: bool = False

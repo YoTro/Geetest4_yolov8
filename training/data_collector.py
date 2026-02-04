@@ -39,6 +39,10 @@ def _fetch_proxies_from_file(proxy_file: Path) -> List[str]:
         logger.error(f"从文件加载代理失败: {e}")
         return []
 
+def _get_train_val_split_folder() -> str:
+    """Randomly determines if an item belongs to 'train' or 'val' split (9:1 ratio)."""
+    return "train" if random.random() < 0.9 else "val"
+
 def _collect_single_sample(proxy: Optional[str], output_dir: list, captcha_id: str) -> bool:
     """使用单个代理或无代理收集一个验证码样本。"""
     logger = logging.getLogger(__name__)
@@ -67,20 +71,24 @@ def _collect_single_sample(proxy: Optional[str], output_dir: list, captcha_id: s
         if main_image is None:
             logger.warning(f"下载主图片失败 (代理: {proxy or '无'})。")
             return False
+
+        # Decide whether to save in train or val
+        split_folder = _get_train_val_split_folder()
             
         timestamp = int(time.time() * 1000)
         random_part = random.randint(100, 999)
         filename = f"geetest_{timestamp}_{random_part}.png"
-        image_path = output_dir[0] / filename
+        image_path = output_dir[0] / split_folder / filename
         main_image.save(image_path)
 
         # Handle ques_imgs
         if image_urls.get("ques_imgs"):
+            ques_dir = output_dir[1] / split_folder
             for i, ques_img_url in enumerate(image_urls["ques_imgs"]):
                 ques_image = image_processor.download_image(session, ques_img_url)
                 if ques_image:
                     ques_filename = f"geetest_{timestamp}_{random_part}_{i}.png"
-                    ques_image_path = output_dir[1] / ques_filename
+                    ques_image_path = ques_dir / ques_filename
                     ques_image.save(ques_image_path)
                 else:
                     logger.warning(f"下载问题图片失败: {ques_img_url} (代理: {proxy or '无'})。")
@@ -113,10 +121,14 @@ def run_collection_pipeline(
     logger = logging.getLogger(__name__)
     main_image_output_dir = Path(output_dir) / "images"
     ques_image_output_dir = Path(output_dir) /"ques_imgs"
-    main_image_output_dir.mkdir(parents=True, exist_ok=True)
-    ques_image_output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create train and val directories
+    for folder in [main_image_output_dir, ques_image_output_dir]:
+        (folder / "train").mkdir(parents=True, exist_ok=True)
+        (folder / "val").mkdir(parents=True, exist_ok=True)
+
     image_output_dir = [main_image_output_dir, ques_image_output_dir]
-    logger.info(f"数据将保存到: {output_dir}")
+    logger.info(f"数据将保存到: {output_dir}, 并按9:1比例分配到train/val文件夹。")
 
     if proxy_source:
         logger.info(f"检测到代理源，将使用 {max_workers} 个工作线程的代理模式。")

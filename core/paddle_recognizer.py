@@ -169,10 +169,9 @@ class PaddleRecInfer:
             else:
                 self.logger.info("未找到 PIR 模型，尝试加载旧版双文件模型。\n")
                 model_file = os.path.join(model_dir, "inference.json")
+                params_file = os.path.join(model_dir, "inference.pdiparams")
                 if not os.path.exists(model_file):
                     model_file = os.path.join(model_dir, "inference.pdmodel")
-                params_file = os.path.join(model_dir, "inference.pdiparams")
-                
                 if not os.path.exists(model_file) or not os.path.exists(params_file):
                     raise FileNotFoundError(f"在 '{model_dir}' 中找不到有效的推理模型文件对 (.pdmodel/.json + .pdiparams)。")
                 
@@ -183,7 +182,9 @@ class PaddleRecInfer:
             else: 
                 config.disable_gpu()
                 config.disable_mkldnn() # For CPU, explicitly disable MKL-DNN (OneDNN) if it's causing issues.
-            
+                config.set_cpu_math_library_num_threads(1) 
+                # 禁用一些可能导致死锁的优化策略
+                config.delete_pass("conv_transpose_eltwiseadd_bn_fuse_pass")
             config.switch_ir_optim(True)
 
             self.predictor = create_predictor(config)

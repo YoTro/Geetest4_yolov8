@@ -3,7 +3,7 @@
 """
 import logging
 import requests
-from typing import Tuple, Optional, Union
+from typing import Tuple, Optional, Union, List
 from PIL import Image
 import io
 import base64
@@ -103,7 +103,7 @@ def base64_to_image(base64_str: str) -> Image.Image:
     img_data = base64.b64decode(base64_str)
     return Image.open(io.BytesIO(img_data)).convert('RGB')
 
-def draw_points_on_image(img: Image.Image, points: list[Tuple[int, int]], ques_images: Optional[list[Image.Image]] = None) -> Image.Image:
+def draw_points_on_image(img: Image.Image, points: List[Tuple[int, int]], ques_images: Optional[List[Image.Image]] = None) -> Image.Image:
     """
     在图片上绘制带编号的点击点，并可选地将ques图片拼接在顶部。
     """

@@ -25,6 +25,9 @@ from paddle import get_device
 
 class SimpleDataSet(Dataset):
     def __init__(self, config, mode, logger, seed=None):
+        # [主要作用] 初始化数据集对象。
+        # 该函数会读取配置文件，加载标签文件列表，并根据配置进行数据集的初始化设置，
+        # 例如设置数据目录、是否打乱、数据增强操作等。
         super(SimpleDataSet, self).__init__()
         self.logger = logger
         self.mode = mode.lower()
@@ -56,6 +59,9 @@ class SimpleDataSet(Dataset):
         self.need_reset = True in [x < 1 for x in ratio_list]
 
     def get_image_info_list(self, file_list, ratio_list):
+        # [主要作用] 读取并解析标签文件。
+        # 该函数会打开指定的标签文件列表，读取所有行（即图片路径和标签），
+        # 并根据给定的比例（ratio_list）进行采样，最终返回一个包含所有数据信息的列表。
         if isinstance(file_list, str):
             file_list = [file_list]
         data_lines = []
@@ -69,11 +75,16 @@ class SimpleDataSet(Dataset):
         return data_lines
 
     def shuffle_data_random(self):
+        # [主要作用] 随机打乱数据。
+        # 在训练模式下，用于将 self.data_lines 列表中的数据顺序进行随机化，以增加训练的随机性。
         random.seed(self.seed)
         random.shuffle(self.data_lines)
         return
 
     def _try_parse_filename_list(self, file_name):
+        # [主要作用] 解析特殊的文件名格式。
+        # 用于处理一个标签对应多个图片的情况（文件名以'['开头，为JSON格式的列表）。
+        # 如果遇到这种格式，会从中随机选择一个文件名返回。
         # multiple images -> one gt label
         if len(file_name) > 0 and file_name[0] == "[":
             try:
@@ -84,6 +95,8 @@ class SimpleDataSet(Dataset):
         return file_name
 
     def get_ext_data(self):
+        # [主要作用] 获取用于数据增强的额外数据。
+        # 例如，在实现 CutMix、Mixup 等需要混合多张图片的数据增强方法时，此函数用于随机获取额外的图片和标签。
         ext_data_num = 0
         for op in self.ops:
             if hasattr(op, "ext_data_num"):
@@ -118,6 +131,10 @@ class SimpleDataSet(Dataset):
         return ext_data
 
     def __getitem__(self, idx, _recursive_count=0):
+        # [主要作用] 获取并处理单个数据样本。
+        # 这是 Pytorch/Paddle.io.Dataset 的核心函数，根据索引（idx）获取对应的数据行，
+        # 读取图片，然后应用一系列的数据变换（如增强、归一化），最后返回处理好的数据。
+        # 包含了异常处理和重试机制，确保在数据处理出错时能够跳过并获取下一个样本。
         if _recursive_count > 10:
             self.logger.error("FATAL: Failed to get a valid sample after 10 retries. Please check your dataset and file paths in label files.")
             raise RuntimeError("Failed to get a valid sample after 10 retries. Check logs for details.")
@@ -166,17 +183,23 @@ class SimpleDataSet(Dataset):
         return outs
 
     def __len__(self):
+        # [主要作用] 返回数据集中样本的总数。
         return len(self.data_idx_order_list)
 
 
 class MultiScaleDataSet(SimpleDataSet):
     def __init__(self, config, mode, logger, seed=None):
+        # [主要作用] 初始化多尺度数据集。
+        # 继承自 SimpleDataSet，并在其基础上增加对多尺度训练的特定支持（例如基于宽高比的排序）。
         super(MultiScaleDataSet, self).__init__(config, mode, logger, seed)
         self.ds_width = config[mode]["dataset"].get("ds_width", False)
         if self.ds_width:
             self.wh_aware()
 
     def wh_aware(self):
+        # [主要作用] 实现宽高比感知的数据排序。
+        # 为了提高多尺度训练的效率，此函数计算数据集中每张图片的宽高比，并按此比例对数据进行排序。
+        # 这样可以将形状相似的图片分到同一个批次中，减少批处理时填充（padding）的开销。
         data_line_new = []
         wh_ratio = []
         for line in self.data_lines:
@@ -191,6 +214,9 @@ class MultiScaleDataSet(SimpleDataSet):
         self.data_idx_order_list = list(range(len(self.data_lines)))
 
     def resize_norm_img(self, data, imgW, imgH, padding=True):
+        # [主要作用] 对图像进行归一化和缩放。
+        # 这是一个特定的图像变换函数，它将图像缩放到指定的高度（imgH）和宽度（imgW），
+        # 并进行归一化处理（数值缩放到[-1, 1]范围）。支持可选的填充（padding）。
         img = data["image"]
         h = img.shape[0]
         w = img.shape[1]
@@ -221,6 +247,9 @@ class MultiScaleDataSet(SimpleDataSet):
         return data
 
     def __getitem__(self, properties):
+        # [主要作用] 获取并处理单个多尺度数据样本。
+        # 针对多尺度训练重写了__getitem__方法。它接收一个包含（宽度、高度、索引）的元组作为参数，
+        # 根据给定的尺寸和索引来获取和处理数据，支持动态调整图像的输入尺寸。
         # properties is a tuple, contains (width, height, index)
         img_height = properties[1]
         idx = properties[2]

@@ -6,12 +6,15 @@ __pycache__/
 .Python
 env/
 venv/
+.env
+*.env
 *.egg
 *.egg-info/
 .coverage
 .pytest_cache/
 htmlcov/
 dist/
+build/
 
 # IDEs
 .idea/
@@ -23,8 +26,10 @@ Thumbs.db
 
 # Logs
 *.log
-logs/*
+logs/
 !logs/__init__.py
+temp/
+tmp/
 
 # Data
 # Explicitly ignore generated dataset parts
@@ -36,14 +41,15 @@ logs/*
 # Ignore collected raw data
 /data/raw/collected/
 /data/synthetic_trocr_data/
-/data/raw/             # Source raw data (images, gt.jsonl)
 /data/models/          # Models (if not in runs/)
 /data/dataset/yolo/dataset.yaml # YOLO dataset configuration
 
 # --- Existing runs/ and config/ entries ---
-runs
+runs/
 # Hugging Face cache
 .cache/huggingface/hub/
 
+# utils
+utils/dict/
 # Generated images (already deleted, but good to keep in .gitignore)
 

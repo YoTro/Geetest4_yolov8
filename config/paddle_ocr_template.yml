@@ -22,10 +22,10 @@ Architecture:
     name: MobileNetV3
     scale: 0.5
     model_name: large
+    large_stride: [1, 2, 2, 2]
   Neck:
     name: SequenceEncoder
-    encoder_type: rnn 
-    depth: 2
+    encoder_type: rnn
     hidden_size: 96
   Head:
     name: CTCHead
@@ -70,7 +70,7 @@ Train:
           std: [0.5, 0.5, 0.5]
           order: 'hwc'
       - RecResizeImg:
-          image_shape: [3, 32, 32]
+          image_shape: _REC_IMAGE_SHAPE_
       - KeepKeys: 
           keep_keys: ['image', 'label', 'length']
 
@@ -96,7 +96,7 @@ Eval:
           std: [0.5, 0.5, 0.5]
           order: 'hwc'
       - RecResizeImg:
-          image_shape: [3, 32, 32]
+          image_shape: _REC_IMAGE_SHAPE_
       - KeepKeys: 
           keep_keys: ['image', 'label', 'length']
       

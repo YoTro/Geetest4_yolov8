@@ -1,3 +1,16 @@
+import sys
+import os
+
+# Add the project root and 'libs' directory to sys.path
+# This ensures that internal modules like 'ppocr' can be found.
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+libs_path = os.path.join(project_root, 'libs')
+if libs_path not in sys.path:
+    sys.path.insert(0, libs_path)
+
 """
 配置模块
 =========

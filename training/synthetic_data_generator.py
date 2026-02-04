@@ -4,16 +4,18 @@ import json
 import random
 import platform
 import numpy as np
+from pathlib import Path
 from tqdm import tqdm
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageChops
 from config.settings import settings
+from utils.text_drawing_utils import get_system_font_path, get_chinese_chars_from_unicode_range # NEW: Import char generator
 
 class TrOCRDataGenerator:
     def __init__(self, num_images: int, device: str = "cpu"):
         self.num_images = num_images
         
         # Output directory for generated synthetic data
-        self.output_dir = os.path.join(settings.paths.base_dir, settings.paths.synthetic_trocr_data_dir)
+        self.output_dir = os.path.join(settings.paths.base_dir, settings.paths.synthetic_ques_data_dir)
         self.image_dir = os.path.join(self.output_dir, "images")
         self.label_file = os.path.join(self.output_dir, "labels.jsonl") # Changed from metadata.jsonl for consistency
 
@@ -21,12 +23,17 @@ class TrOCRDataGenerator:
         self.background_dir = os.path.join(settings.paths.base_dir, settings.paths.background_images_dir)
         
         self.device = device
-        self.font_path = self._get_system_font()
+        self.font_path = get_system_font_path('SimHei')
+        self.char_dict_full_path = os.path.join(settings.paths.base_dir, settings.paths.char_dict_path)
         # --- 使用 Unicode 范围生成字符集 ---
-        self.char_set = self._get_chinese_chars_from_unicode_range()
+        if os.path.exists(self.char_dict_full_path):
+            with open(self.char_dict_full_path, 'r', encoding='utf-8') as f:
+                self.char_set = [line.strip() for line in f.readlines() if line.strip()]
+        else:
+            self.char_set = get_chinese_chars_from_unicode_range(max_chars=1000)
         self.background_images = [
             os.path.join(self.background_dir, f)
-            for f in os.path.listdir(self.background_dir)
+            for f in os.listdir(self.background_dir)
             if f.lower().endswith(('.jpg', '.png'))
         ]
         self._setup_dirs()
@@ -36,38 +43,9 @@ class TrOCRDataGenerator:
         # Ensure labels.jsonl parent directory exists
         Path(self.label_file).parent.mkdir(parents=True, exist_ok=True)
 
-    def _get_system_font(self):
-        system = platform.system()
-        paths = {
-            "Darwin": ["/System/Library/Fonts/STHeiti Medium.ttc"],
-            "Windows": ["C:/Windows/Fonts/msyh.ttc"],
-            "Linux": ["/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"]
-        }.get(system, [])
-        for path in paths:
-            if os.path.exists(path): return path
-        return None
 
-    def _get_chinese_chars_from_unicode_range(self):
-        """
-        # CJK 统一汉字 (Common CJK Unified Ideographs) 块
-        # 仅取 U+4E00 到 U+9FA5 的汉字，覆盖简体汉字
-        """
-        chars = []
-        start_code = 0x4E00
-        end_code = 0x9FA5
-        
-        for code in range(start_code, end_code + 1):
-            char = chr(code)
-            # 可以在此处添加过滤条件，例如排除不常用的字，或者确保是可打印字符
-            # 对于大多数 CJK 范围内的字符，直接添加即可
-            chars.append(char)
-        
-        print(f"已从 Unicode 范围 {hex(start_code)} - {hex(end_code)} 生成 {len(chars)} 个汉字。")
-        
-        # 如果需要更小的字符集，可以在此处进行切片或进一步筛选
-        # 例如，为了控制验证码的复杂性，可以只取前 N 个或一个子集：
-        chars = chars[:3500]  # 前 3500 个最常用简体字
-        return chars
+
+
     def _find_perspective_coeffs(self, src, dst):
         # src, dst: [(x0,y0), (x1,y1), (x2,y2), (x3,y3)]
         matrix = []
@@ -80,7 +58,22 @@ class TrOCRDataGenerator:
         res = np.linalg.lstsq(A, B, rcond=None)[0]
         return res.tolist()
 
-
+    def _apply_hollow_effect(self, img):
+        """模拟极验4中笔画中心镂空、边缘发光的效果"""
+        if random.random() < 0.5:
+            return img
+        r, g, b, a = img.split()
+        mask = a.convert("L")
+        
+        # 边缘提取：膨胀减去腐蚀
+        edge = mask.filter(ImageFilter.MaxFilter(3))
+        inner = mask.filter(ImageFilter.MinFilter(3))
+        hollow_mask = ImageChops.subtract(edge, inner)
+        
+        # 强化边缘
+        hollow_mask = hollow_mask.point(lambda p: p * 2 if p > 50 else 0)
+        
+        return Image.merge("RGBA", (r, g, b, hollow_mask))
     def _apply_perspective_warp(self, img):
         # 随机生成四个角的扰动
         w, h = img.size
@@ -97,7 +90,17 @@ class TrOCRDataGenerator:
 
         coeffs = self._find_perspective_coeffs(src, dst)
         return img.transform((w, h), Image.PERSPECTIVE, coeffs, Image.BICUBIC)
-
+    def _apply_geetest_noise(self, img):
+        """添加极验特有的高频彩色碎点噪声"""
+        arr = np.array(img).astype(np.float32)
+        h, w, c = arr.shape
+        
+        # 随机生成彩色噪点图
+        noise_mask = np.random.rand(h, w) > 0.92
+        for i in range(3): # RGB三通道
+            arr[noise_mask, i] = random.randint(0, 255)
+            
+        return Image.fromarray(arr.astype(np.uint8), 'RGBA')
     def _apply_stroke_thickness_variation(self, img):
         # 提取 alpha 作为笔画结构
         r, g, b, a = img.split()
@@ -119,7 +122,28 @@ class TrOCRDataGenerator:
         # 重新组合颜色 + 新 mask
         out = Image.merge("RGBA", (r, g, b, mask))
         return out
+    def _apply_3d_and_distort(self, canvas):
+        """增加文字的3D厚度感和局部扭曲"""
+        # 1. 模拟厚度：位移叠加
+        r, g, b, a = canvas.split()
+        thickness_layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+        for i in range(1, 4):  # 偏移3层
+            thickness_layer.paste(canvas, (i, i), canvas)
+        
+        # 将厚度层变暗
+        thickness_layer = ImageChops.multiply(thickness_layer, 
+                                              Image.new("RGBA", canvas.size, (50, 50, 50, 255)))
+        canvas = Image.alpha_composite(thickness_layer, canvas)
 
+        # 2. 局部形变 (使用 numpy 模拟水波纹)
+        arr = np.array(canvas)
+        rows, cols, _ = arr.shape
+        # 生成正弦波偏移
+        for i in range(rows):
+            offset = int(5 * np.sin(2 * np.pi * i / 30)) # 振幅5，周期30
+            arr[i] = np.roll(arr[i], offset, axis=0)
+        
+        return Image.fromarray(arr)
 
     def _apply_chromatic_aberration(self, img, intensity=None):
         """色差边缘"""
@@ -155,54 +179,33 @@ class TrOCRDataGenerator:
         draw = ImageDraw.Draw(canvas)
         off_x, off_y = pad - bbox[0], pad - bbox[1]
 
-        neon_colors = [(255, 50, 50), (50, 255, 50), (255, 255, 0), (255, 0, 255)]
-        base_color = random.choice(neon_colors)
-        # 多层重影（Ghosting / Multi-layering）
-        for i in range(random.randint(3, 5), 0, -1):
-            alpha = 100 // i
-            offset = i * 2
-            draw.text((off_x + offset, off_y + offset), char, font=font, 
-                      fill=base_color + (alpha,), stroke_width=random.randint(2, 4), stroke_fill=(0,0,0, alpha))
-            draw.text((off_x - offset, off_y - offset), char, font=font, 
-                      fill=base_color + (alpha,), stroke_width=random.randint(2, 4), stroke_fill=(0,0,0, alpha))
-
-        draw.text((off_x, off_y), char, font=font, fill=base_color + (255,), 
-                  stroke_width=random.randint(2, 4), stroke_fill=(255,255,255,255))
-        canvas = self._apply_chromatic_aberration(canvas)
-        # --- 局部腐蚀 / 焦裂 ---
-        if random.random() < 0.6:
-            r, g, b, a = canvas.split()
-            mask = a.convert("L")
-            m = np.array(mask)
-
-            h, w = m.shape
-            for _ in range(random.randint(2, 5)):
-                cx = random.randint(0, w-1)
-                cy = random.randint(0, h-1)
-                r0 = random.randint(3, max(4, min(w, h) // 12))
-
-                y0 = max(0, cy - r0)
-                y1 = min(h, cy + r0)
-                x0 = max(0, cx - r0)
-                x1 = min(w, cx + r0)
-
-                sub = m[y0:y1, x0:x1]
-                if sub.size == 0:
-                    continue
-
-                # 简单腐蚀：阈值收缩
-                edge = sub < 200
-                sub[edge] = sub[edge] * random.uniform(0.2, 0.6)
-                m[y0:y1, x0:x1] = sub
-
-            new_mask = Image.fromarray(m.astype(np.uint8), "L")
-            canvas = Image.merge("RGBA", (r, g, b, new_mask))
-        # 非连续轮廓（像素级破碎）
-        arr = np.array(canvas).astype(np.float32)
-        noise = np.random.normal(0, 30, arr.shape)
-        arr = np.clip(arr + noise, 0, 255).astype(np.uint8)
-
-        return Image.fromarray(arr, 'RGBA')
+        # 1. 模拟极验高饱和度色彩
+        # 使用 HSV 确保颜色足够“亮”
+        h = random.random()
+        s = random.uniform(0.7, 1.0)
+        v = random.uniform(0.8, 1.0)
+        from colorsys import hsv_to_rgb
+        rgb = hsv_to_rgb(h, s, v)
+        base_color = tuple(int(x * 255) for x in rgb)
+        inner_color = (255 - base_color[0], 255 - base_color[1], 255 - base_color[2], 100)
+        
+        # 2. 绘制多层描边（立体感）
+        for dist in range(random.randint(2, 4), 0, -1):
+            stroke_color = (0, 0, 0, 200) if dist > 1 else (255, 255, 255, 255)
+            draw.text((off_x, off_y), char, font=font, fill=base_color,
+                      stroke_width=dist, stroke_fill=stroke_color)
+            draw.text((off_x, off_y), char, font=font, fill=inner_color) # 填充淡色内部
+        # 3. 镂空效果
+        canvas = self._apply_hollow_effect(canvas)
+        
+        # 4. 色差偏移
+        canvas = self._apply_chromatic_aberration(canvas, intensity=random.randint(1, 3))
+        
+        # 5. 彩色噪点
+        canvas = self._apply_geetest_noise(canvas)
+        # 6. 3D厚度感和局部扭曲
+        canvas = self._apply_3d_and_distort(canvas)
+        return canvas
 
     def generate(self):
         print(f"开始生成 TrOCR 数据集...")
@@ -234,7 +237,9 @@ class TrOCRDataGenerator:
                         # 几何破坏
                         if random.random() < 0.7:
                             styled_img = self._apply_perspective_warp(styled_img)
-
+                        # 亮度调节
+                        if random.random() < 0.3:
+                            bg = bg.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.5, 1.2)))
 
                         rotated = styled_img.rotate(random.randint(-60, 60), expand=True)
 

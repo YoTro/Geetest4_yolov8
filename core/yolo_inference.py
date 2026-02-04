@@ -29,9 +29,14 @@ def load_model(config: YOLOInferenceConfig, paths: PathConfig):
 
     try:
         logger.info(f"加载YOLO模型: {model_path}")
-        device = config.device if config.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu")
-        model = YOLO(model_path)
-        model.to(device)
+        if config.device != "auto":
+            device = config.device  
+        else:
+            if torch.cuda.is_available():
+                device = "cuda"
+            else:
+                device = "cpu"
+        model = YOLO(model_path).to(device)
         logger.info(f"模型已加载到设备: {device}")
         logger.debug(f"模型类别名称: {model.names}")
 
