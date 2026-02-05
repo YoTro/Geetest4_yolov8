@@ -7,37 +7,13 @@ import time
 from pathlib import Path
 from typing import List, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from curl_cffi.requests import Session, get, RequestsError
+from curl_cffi.requests import Session, RequestsError
 from tqdm import tqdm
 
 from config import settings
 from core.gt4 import GeetestV4
 from utils import image_processor
-
-def _fetch_proxies_from_url(proxy_url: str) -> List[str]:
-    """从URL获取代理列表。"""
-    logger = logging.getLogger(__name__)
-    try:
-        response = get(proxy_url, impersonate="chrome110", timeout=10)
-        response.raise_for_status()
-        proxies = response.text.strip().splitlines()
-        logger.info(f"成功从URL加载 {len(proxies)} 个代理。")
-        return [p for p in proxies if p]
-    except RequestsError as e:
-        logger.error(f"从URL加载代理失败: {e}")
-        return []
-
-def _fetch_proxies_from_file(proxy_file: Path) -> List[str]:
-    """从本地文件加载代理列表。"""
-    logger = logging.getLogger(__name__)
-    try:
-        with open(proxy_file, 'r', encoding='utf-8') as f:
-            proxies = f.read().strip().splitlines()
-            logger.info(f"成功从文件 {proxy_file.name} 加载 {len(proxies)} 个代理。")
-            return [p for p in proxies if p]
-    except IOError as e:
-        logger.error(f"从文件加载代理失败: {e}")
-        return []
+from utils import proxy_manager # NEW: Import proxy_manager
 
 def _get_train_val_split_folder() -> str:
     """Randomly determines if an item belongs to 'train' or 'val' split (9:1 ratio)."""
@@ -133,22 +109,7 @@ def run_collection_pipeline(
     if proxy_source:
         logger.info(f"检测到代理源，将使用 {max_workers} 个工作线程的代理模式。")
         
-        proxies = []
-        if proxy_source.startswith("http://") or proxy_source.startswith("https://"):
-            try:
-                # Test if the URL returns a list or is a single proxy
-                response = get(proxy_source, impersonate="chrome110", timeout=10)
-                response.raise_for_status()
-                if "\n" in response.text or " " in response.text:
-                    proxies = _fetch_proxies_from_url(proxy_source)
-                else:
-                    proxies = [proxy_source.strip()]
-            except RequestsError:
-                 proxies = [proxy_source.strip()] # Assume it's a single proxy if URL fetch fails
-        elif Path(proxy_source).is_file():
-            proxies = _fetch_proxies_from_file(Path(proxy_source))
-        else:
-            proxies = [proxy_source.strip()]
+        proxies = proxy_manager.get_proxies(proxy_source) # Use new get_proxies function
 
         if not proxies:
             logger.error("没有可用的代理，收集任务终止。")

@@ -121,7 +121,6 @@ class LoggingConfig:
 class DataCollectionConfig:
     """数据收集配置"""
     output_dir: str = "data/raw/collected"
-    max_storage_gb: int = 10
 
 @dataclass
 class YOLOTrainingConfig:

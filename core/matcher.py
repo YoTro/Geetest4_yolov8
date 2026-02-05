@@ -202,6 +202,11 @@ class ImageMatcher:
 
         # 裁剪出校正后的字符区域
         img_cropped = cv2.getRectSubPix(img_rotated, size, center)
+        
+        if img_cropped is None:
+            # 如果裁剪失败，通常是因为尺寸或中心点问题，返回空列表
+            print(f"Debug: cv2.getRectSubPix for img_cropped returned None for size={size}, center={center}")
+            return []
 
         # 为白色背景创建一个新的图像
         img_final_bgr = np.full((size[1], size[0], 3), (255, 255, 255), dtype=np.uint8)
@@ -209,6 +214,11 @@ class ImageMatcher:
         # 将 GrabCut 蒙版也进行旋转和裁剪
         mask_rotated = cv2.warpAffine(mask2, M, (mask2.shape[1], mask2.shape[0]))
         mask_cropped = cv2.getRectSubPix(mask_rotated, size, center)
+        
+        # 再次检查 mask_cropped 是否为 None，以防万一
+        if mask_cropped is None:
+            print(f"Debug: cv2.getRectSubPix for mask_cropped returned None for size={size}, center={center}")
+            return []
         
         # 使用蒙版将前景粘贴到白色背景上
         img_final_bgr[mask_cropped == 1] = img_cropped[mask_cropped == 1]
