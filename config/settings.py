@@ -26,8 +26,9 @@ class PathConfig:
     trocr_dataset_dir: str = "data/dataset/trocr"
     synthetic_main_data_dir: str = "data/raw/synthetic_main_data"
     background_images_dir: str = "data/raw/backgrounds"
-    font_dir: str = "assets/fonts" # Directory for fonts
-    debug_output_dir: str = "logs/debug_output" #  Directory for saving debug images
+    template_dir: str = "data/templates" # NEW: Directory for template images
+    font_dir: str = "assets/fonts" # NEW: Directory for fonts
+    debug_output_dir: str = "logs/debug_output" # NEW: Directory for saving debug images
     dict_image_dir: str = "utils/dict"
     log_dir: str = "logs"
     runs_dir: str = "runs/detect" # For YOLO training outputs
@@ -36,7 +37,7 @@ class PathConfig:
     best_model_name: str = "best.pt"
     last_model_name: str = "last.pt"
     yolo_dataset_yaml_name: str = "dataset.yaml" # Specific to YOLO
-    char_dict_path: str = "utils/dict/character_dict.txt" # common standard chinese characters table with 8105 words
+    char_dict_path: str = "utils/dict/character_dict.txt" # NEW: Path to character set for dictionary generation
 
     def get_model_path(self, model_name: str) -> str:
         """获取模型文件的绝对路径"""
@@ -215,10 +216,10 @@ class ImageMatcherConfig:
     """图片匹配器相关配置"""
     default_weights: Dict[str, float] = field(default_factory=lambda: {
         'ssim': 0.1,
-        'hog': 0.6,
-        'phash': 0.3
+        'hog': 0.3,
+        'proj': 0.6
     })
-    min_match_score: float = 0.5 # 最小匹配分数阈值，低于此阈值则认为匹配失败
+    min_match_score: float = 0.45 # 最小匹配分数阈值，低于此阈值则认为匹配失败
 
 @dataclass
 class OCRConfig:

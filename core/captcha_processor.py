@@ -21,7 +21,11 @@ from utils import image_processor, coordinate_utils
 from . import yolo_inference, manual_fallback
 from .trocr_recognizer import TrOCRRecognizer
 from .paddle_recognizer import PaddleRecognizer, cosine_similarity
+<<<<<<< HEAD
 from .matcher import ImageMatcher # NEW: 导入 ImageMatcher
+=======
+from .match_ques_features import ImageMatcher # NEW: 导入 ImageMatcher
+>>>>>>> 1b8b9591f3bb724fd37085cd82b6dfa158b89e2a
 
 class CaptchaProcessor:
     """

@@ -23,7 +23,7 @@ class TrOCRDataGenerator:
         self.background_dir = os.path.join(settings.paths.base_dir, settings.paths.background_images_dir)
         
         self.device = device
-        self.font_path = get_system_font_path('SimHei')
+        self.font_path = get_system_font_path('SimHei') # NEW: Use the utility function
         self.char_dict_full_path = os.path.join(settings.paths.base_dir, settings.paths.char_dict_path)
         # --- 使用 Unicode 范围生成字符集 ---
         if os.path.exists(self.char_dict_full_path):
@@ -42,7 +42,6 @@ class TrOCRDataGenerator:
         os.makedirs(self.image_dir, exist_ok=True)
         # Ensure labels.jsonl parent directory exists
         Path(self.label_file).parent.mkdir(parents=True, exist_ok=True)
-
 
 
 

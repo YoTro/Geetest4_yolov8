@@ -7,7 +7,7 @@ from config.settings import settings # NEW: For font_dir path
 
 # Google Fonts URL for Noto Sans CJK SC Regular
 NOTO_SANS_CJK_URL = "https://fonts.gstatic.com/ea/notosanssc/v1/NotoSansSC-Bold.otf"
-NOTO_SANS_CJK_FILENAME = "NotoSansSC-Bold.otf"
+NOTO_SANS_CJK_FILENAME = "NotoSansSC-Bold.otf" # Use a consistent filename
 
 def get_system_font_path(font_name: str) -> str:
     """
@@ -24,7 +24,8 @@ def get_system_font_path(font_name: str) -> str:
     try:
         font_prop = fm.FontProperties(family=font_name)
         system_font_path = fm.findfont(font_prop)
-        if font_name.lower() in system_font_path.lower() and 'ttf' in system_font_path:
+        # Check for both .ttf and .ttc extensions for robustness
+        if font_name.lower() in system_font_path.lower() and ('ttf' in system_font_path or 'ttc' in system_font_path):
             print(f"找到系统字体 '{font_name}': {system_font_path}")
             return system_font_path
     except Exception:
@@ -35,16 +36,16 @@ def get_system_font_path(font_name: str) -> str:
         noto_font_name = "Noto Sans CJK SC"
         font_prop_fallback = fm.FontProperties(family=noto_font_name)
         system_font_path_fallback = fm.findfont(font_prop_fallback)
-        if noto_font_name.lower() in system_font_path_fallback.lower() and 'ttf' in system_font_path_fallback:
-            print(f"系统未找到 '{noto_font_name}'，使用备用字体 'Noto Sans CJK SC': {system_font_path_fallback}")
+        if noto_font_name.lower() in system_font_path_fallback.lower() and ('ttf' in system_font_path_fallback or 'ttc' in system_font_path_fallback):
+            print(f"系统未找到 '{font_name}'，使用备用字体 'Noto Sans CJK SC': {system_font_path_fallback}")
             return system_font_path_fallback
     except Exception:
         pass # 继续尝试下载
 
     # 3. 如果系统仍未找到合适字体，则尝试下载 Noto Sans CJK SC
-    print(f"系统未找到 '{font_name}' 或 'Noto Sans CJK SC' 字体，尝试下载备用字体...")
+    print(f"系统未找到 '{font_name}' 或 '{noto_font_name}' 字体，尝试下载备用字体...")
     font_dir = os.path.join(settings.paths.base_dir, settings.paths.font_dir)
-    local_font_path = os.path.join(font_dir, font_name)
+    local_font_path = os.path.join(font_dir, NOTO_SANS_CJK_FILENAME) # Use the predefined filename
 
     if os.path.exists(local_font_path):
         print(f"已在 '{font_dir}' 中找到下载的字体: {local_font_path}")
@@ -59,7 +60,7 @@ def get_system_font_path(font_name: str) -> str:
             for chunk in response.iter_content(chunk_size=8192):
                 f.write(chunk)
         print(f"字体下载完成: {local_font_path}")
-        # 下载后需要刷新 matplotlib 字体缓存
+        # 下载后需要刷新 matplotlib 字体缓存 (这行是注释掉的，但可以保留)
         # fm._rebuild() 
         return local_font_path
     except requests.exceptions.RequestException as e:

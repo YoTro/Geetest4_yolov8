@@ -71,13 +71,7 @@ def train_paddle_model(
     template_config['Global']['character_dict_path'] = char_dict_path
     template_config['Global']['max_text_length'] = config.max_text_length
     template_config['Global']['use_space_char'] = config.use_space_char
-    rec_image_shape = [3, config.rec_image_height, config.rec_image_width]
-    for section in ['Train', 'Eval']:
-        for transform in template_config[section]['dataset']['transforms']:
-            if 'RecResizeImg' in transform:
-                transform['RecResizeImg']['image_shape'] = rec_image_shape
-                logger.info(f"动态设置 {section} image_shape 为: {rec_image_shape}")
-                break
+    
     # --- 正确处理预训练和恢复训练 ---
     # 清空模板中的默认值
     template_config['Global']['pretrained_model'] = None

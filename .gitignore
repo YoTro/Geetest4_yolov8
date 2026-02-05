@@ -24,6 +24,9 @@ build/
 .DS_Store
 Thumbs.db
 
+# assets
+assets/fonts/
+
 # Logs
 *.log
 logs/
@@ -31,18 +34,27 @@ logs/
 temp/
 tmp/
 
-# Data
+# Data & Datasets
 # Explicitly ignore generated dataset parts
 /data/dataset/yolo/images/
 /data/dataset/yolo/labels/
-/data/dataset/paddle/   # Ignore all PaddleOCR dataset content as it's typically generated
-/data/dataset/trocr/    # Ignore all TrOCR dataset content as it's generated
+/data/dataset/yolo/dataset.yaml # YOLO dataset configuration
 
-# Ignore collected raw data
+# Paddle specific
+/data/dataset/paddle/
+/data/dataset/paddle/images/train/
+/data/dataset/paddle/images/val/
+/data/dataset/paddle/main_images/
+
+# TrOCR specific
+/data/dataset/trocr/
+
+# Ignore collected raw data and other generated data
 /data/raw/collected/
 /data/synthetic_trocr_data/
-/data/models/          # Models (if not in runs/)
-/data/dataset/yolo/dataset.yaml # YOLO dataset configuration
+
+# Models
+/data/models/
 
 # --- Existing runs/ and config/ entries ---
 runs/
@@ -52,4 +64,3 @@ runs/
 # utils
 utils/dict/
 # Generated images (already deleted, but good to keep in .gitignore)
-
