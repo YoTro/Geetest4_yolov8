@@ -15,7 +15,7 @@
 
 ```bash
 apt-get update && apt install vim file unzip python3-tk && \
-python3 -m pip install paddlepaddle-gpu==2.6.1 -i https://www.paddlepaddle.org.cn/packages/stable/cu118/ && \
+python3 -m pip install paddlepaddle-gpu==3.3.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu118/ && \
 pip3 install -r requirements.txt && \
 wget -nc -P data/models https://paddleocr.bj.bcebos.com/PP-OCRv4/chinese/ch_PP-OCRv4_rec_train.tar && \
 tar -xf data/models/ch_PP-OCRv4_rec_train.tar -C data/models/

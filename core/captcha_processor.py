@@ -21,11 +21,8 @@ from utils import image_processor, coordinate_utils
 from . import yolo_inference, manual_fallback
 from .trocr_recognizer import TrOCRRecognizer
 from .paddle_recognizer import PaddleRecognizer, cosine_similarity
-<<<<<<< HEAD
 from .matcher import ImageMatcher # NEW: 导入 ImageMatcher
-=======
-from .match_ques_features import ImageMatcher # NEW: 导入 ImageMatcher
->>>>>>> 1b8b9591f3bb724fd37085cd82b6dfa158b89e2a
+
 
 class CaptchaProcessor:
     """
@@ -121,6 +118,7 @@ class CaptchaProcessor:
                 if char and score >= self.settings.image_matcher.min_match_score:
                     item['char'] = char
                     item['score'] = score
+                    item['recognized_by_imagematcher'] = True # NEW: Mark as recognized by ImageMatcher
                     self.logger.info(f"Ques {item['index']}: ImageMatcher 识别结果 -> '{item['char']}' (得分: {item['score']:.4f})")
                     continue # 成功匹配，跳过OCR回退
                 else:
@@ -144,7 +142,7 @@ class CaptchaProcessor:
         final_coords = [None] * len(ques_data)
         matched_det_indices = set() # 追踪已被匹配的检测区域的原始索引
         
-        min_ocr_confidence_for_text_match = settings.ocr.paddle.min_auto_confidence # Use the same confidence for text matching
+        min_ocr_confidence_for_text_match = getattr(self.settings.ocr, self.settings.ocr.engine).min_auto_confidence # Use the same confidence for text matching
 
         available_dets_map = defaultdict(list)
         for det in detections:
@@ -155,18 +153,30 @@ class CaptchaProcessor:
         for ques_item in ques_data:
             char_to_find = ques_item['char']
             is_match_found = False
-            # Only attempt text matching if the ques OCR also resulted in a single character with sufficient confidence
-            if char_to_find and len(char_to_find) == 1 and ques_item['score'] >= min_ocr_confidence_for_text_match:
-                if available_dets_map[char_to_find]:
-                    sorted_dets = sorted(available_dets_map[char_to_find], key=lambda d: d['center'][0])
-                    for det_candidate in sorted_dets:
-                        if det_candidate['det_index'] not in matched_det_indices:
-                            final_coords[ques_item['index']] = det_candidate['center']
-                            matched_det_indices.add(det_candidate['det_index'])
-                            available_dets_map[char_to_find].remove(det_candidate)
-                            self.logger.info(f"文本匹配: Ques {ques_item['index']} ('{char_to_find}') -> 坐标 {det_candidate['center']}")
-                            is_match_found = True
-                            break
+            
+            # Determine appropriate confidence threshold for text matching
+            confidence_meets_threshold = False
+            if char_to_find and len(char_to_find) == 1:
+                if ques_item.get('recognized_by_imagematcher', False):
+                    # If recognized by ImageMatcher, it already passed ImageMatcher's min_match_score.
+                    # So, it's considered good enough for text matching.
+                    confidence_meets_threshold = True 
+                else:
+                    # If not recognized by ImageMatcher (i.e., by OCR or failed both), 
+                    # then apply the OCR confidence threshold.
+                    confidence_meets_threshold = (ques_item['score'] >= min_ocr_confidence_for_text_match)
+                
+                if confidence_meets_threshold:
+                    if available_dets_map[char_to_find]:
+                        sorted_dets = sorted(available_dets_map[char_to_find], key=lambda d: d['center'][0])
+                        for det_candidate in sorted_dets:
+                            if det_candidate['det_index'] not in matched_det_indices:
+                                final_coords[ques_item['index']] = det_candidate['center']
+                                matched_det_indices.add(det_candidate['det_index'])
+                                available_dets_map[char_to_find].remove(det_candidate)
+                                self.logger.info(f"文本匹配: Ques {ques_item['index']} ('{char_to_find}') -> 坐标 {det_candidate['center']}")
+                                is_match_found = True
+                                break
             
             if not is_match_found:
                 # If text matching was not even attempted (e.g., ques OCR was bad) or it failed
@@ -180,54 +190,38 @@ class CaptchaProcessor:
                 unmatched_ques_for_similarity.append(ques_item)
         
         if unmatched_ques_for_similarity:
-            self.logger.info(f"--- 步骤 3: 对 {len(unmatched_ques_for_similarity)} 个剩余字符执行相似度匹配 ---")
-            if self.settings.ocr.engine != 'paddle':
-                 return {"success": False, "error": "Similarity matching fallback requires PaddleOCR engine.", "mode": "auto"}
-
-            remaining_det_items = [d for d in detections if d['det_index'] not in matched_det_indices]
+            self.logger.info(f"--- 步骤 3: 文本匹配未完成，对所有 {len(ques_data)} 个字符执行全局高级匹配 ---")
             
-            if not remaining_det_items:
-                self.logger.error("相似度匹配失败：没有剩余的检测区域可供匹配。")
-            elif len(remaining_det_items) < len(unmatched_ques_for_similarity):
-                self.logger.warning(f"相似度匹配：剩余检测区域 ({len(remaining_det_items)}) 少于待匹配目标 ({len(unmatched_ques_for_similarity)})。")
-            
-            # Get embeddings for unmatched ques and remaining detections
-            ques_embeddings = [] # store {'orig_index', 'embedding'}
-            for item in unmatched_ques_for_similarity:
-                embedding = self.ocr_recognizer.get_embedding(item['image'])
-                if embedding is not None:
-                    ques_embeddings.append({'orig_index': item['index'], 'embedding': embedding})
-                else:
-                    self.logger.warning(f"未能为 Ques {item['index']} 提取特征向量，跳过相似度匹配。")
+            # --- 全局高级匹配逻辑 ---
+            # 策略：一旦需要高级匹配，就对所有图片进行全局最优分配，覆盖之前的文本匹配结果。
+            main_char_images_to_match = [main_image.crop(det['bbox']) for det in detections]
+            ques_char_images_to_match = ques_images # 使用所有原始ques图片
 
-            det_embeddings = [] # store {'center', 'det_index', 'embedding'}
-            for det_item in remaining_det_items:
-                embedding = self.ocr_recognizer.get_embedding(main_image.crop(det_item['bbox']))
-                if embedding is not None:
-                    det_embeddings.append({'center': det_item['center'], 'det_index': det_item['det_index'], 'embedding': embedding})
-                else:
-                    self.logger.warning(f"未能为 Det {det_item['det_index']} 提取特征向量，跳过相似度匹配。")
+            if main_char_images_to_match and ques_char_images_to_match:
+                self.logger.info(f"准备进行全局高级匹配: {len(ques_char_images_to_match)} 个 ques 图片 vs {len(main_char_images_to_match)} 个检测区域。")
+                self.logger.info("调用 ImageMatcher 的 find_best_matches_for_main_image 进行匹配...")
+                
+                matches = self.image_matcher.find_best_matches_for_main_image(
+                    main_char_images=main_char_images_to_match,
+                    ques_char_images=ques_char_images_to_match,
+                    weights=self.settings.image_matcher.default_weights
+                )
 
-            if ques_embeddings and det_embeddings:
-                similarity_threshold = settings.ocr.paddle.similarity_threshold
-                cost_matrix = np.full((len(ques_embeddings), len(det_embeddings)), 2.0)
-                for i in range(len(ques_embeddings)):
-                    for j in range(len(det_embeddings)):
-                        sim = cosine_similarity(ques_embeddings[i]['embedding'], det_embeddings[j]['embedding'])
-                        if sim >= similarity_threshold:
-                            cost_matrix[i, j] = 1 - sim
-                    
-                row_ind, col_ind = scipy.optimize.linear_sum_assignment(cost_matrix)
+                # 重置 final_coords，因为全局匹配的结果将完全覆盖它
+                final_coords = [None] * len(ques_data)
+                
+                # 注意：这里的 main_idx 和 ques_idx 分别对应 `detections` 和 `ques_images` 列表的索引
+                for main_idx, ques_idx, score in matches:
+                    # 如果当前 ques_idx 已经有更高分的匹配，则跳过（不太可能发生，因为匈牙利算法已找到最优解）
+                    if final_coords[ques_idx] is not None:
+                        continue
 
-                for r, c in zip(row_ind, col_ind):
-                    if cost_matrix[r, c] < 1.0:
-                            original_ques_index = ques_embeddings[r]['orig_index']
-                            matched_center = det_embeddings[c]['center']
-                            final_coords[original_ques_index] = matched_center
-                            matched_det_indices.add(det_embeddings[c]['det_index']) # Mark as used
-                            self.logger.info(f"相似度匹配: Ques {original_ques_index} -> 坐标 {matched_center}")
+                    matched_center = detections[main_idx]['center']
+                    final_coords[ques_idx] = matched_center
+                    self.logger.info(f"全局高级匹配: Ques {ques_idx} -> 坐标 {matched_center} (得分: {score:.4f})")
             else:
-                self.logger.warning("未能为待匹配项生成有效的特征向量。")
+                self.logger.warning("未能为待匹配项生成有效的图像列表，跳过高级匹配。")
+            # --- 全局高级匹配逻辑结束 ---
 
         # --- 5. 最终验证 ---
         # Debugging: Draw and save click points if enabled

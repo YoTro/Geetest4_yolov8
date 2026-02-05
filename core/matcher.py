@@ -8,6 +8,7 @@ import imagehash
 from skimage.feature import hog
 from skimage.metrics import structural_similarity as ssim
 from sklearn.metrics.pairwise import cosine_similarity
+from scipy.optimize import linear_sum_assignment
 from config.settings import settings # NEW: Import global settings
 
 class ImageMatcher:
@@ -157,6 +158,140 @@ class ImageMatcher:
                 best_char = char
 
         return best_char, max_score
+    def _segment_and_straighten_char(self, img_pil):
+        """
+        使用 GrabCut 分割前景并使用 minAreaRect 校正方向。
+        返回4个旋转角度 (0, 90, 180, 270) 的 PIL 图像列表。
+        """
+        img_cv = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
+        mask = np.zeros(img_cv.shape[:2], np.uint8)
+        rect = (1, 1, img_cv.shape[1] - 2, img_cv.shape[0] - 2)
+
+        bgdModel = np.zeros((1, 65), np.float64)
+        fgdModel = np.zeros((1, 65), np.float64)
+
+        try:
+            cv2.grabCut(img_cv, mask, rect, bgdModel, fgdModel, 5, cv2.GC_INIT_WITH_RECT)
+        except Exception:
+            # 如果 GrabCut 失败（例如，对于完全空白的图像），返回空列表
+            return []
+
+        mask2 = np.where((mask == 2) | (mask == 0), 0, 1).astype('uint8')
+        
+        # 寻找前景轮廓
+        contours, _ = cv2.findContours(mask2, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return []
+
+        # 找到最大轮廓并获取其最小面积矩形
+        largest_contour = max(contours, key=cv2.contourArea)
+        rect = cv2.minAreaRect(largest_contour)
+        
+        angle = rect[2]
+        size = tuple(map(int, rect[1]))
+        center = tuple(map(int, rect[0]))
+
+        # 根据角度调整，确保宽度大于高度
+        if size[0] < size[1]:
+            angle += 90
+            size = (size[1], size[0])
+
+        # 获取旋转矩阵并应用
+        M = cv2.getRotationMatrix2D(center, angle, 1.0)
+        img_rotated = cv2.warpAffine(img_cv, M, (img_cv.shape[1], img_cv.shape[0]))
+
+        # 裁剪出校正后的字符区域
+        img_cropped = cv2.getRectSubPix(img_rotated, size, center)
+
+        # 为白色背景创建一个新的图像
+        img_final_bgr = np.full((size[1], size[0], 3), (255, 255, 255), dtype=np.uint8)
+        
+        # 将 GrabCut 蒙版也进行旋转和裁剪
+        mask_rotated = cv2.warpAffine(mask2, M, (mask2.shape[1], mask2.shape[0]))
+        mask_cropped = cv2.getRectSubPix(mask_rotated, size, center)
+        
+        # 使用蒙版将前景粘贴到白色背景上
+        img_final_bgr[mask_cropped == 1] = img_cropped[mask_cropped == 1]
+
+        base_img = Image.fromarray(cv2.cvtColor(img_final_bgr, cv2.COLOR_BGR2RGB))
+
+        # 生成四个旋转角度的图像
+        rotated_images = []
+        for rot_angle in [0, 90, 180, 270]:
+            rotated_images.append(base_img.rotate(rot_angle, expand=True))
+            
+        return rotated_images
+
+    def find_best_matches_for_main_image(self, main_char_images, ques_char_images, weights=None):
+        """
+        为从主图中提取的字符（复杂背景）找到最佳匹配。
+        
+        Args:
+            main_char_images (list[PIL.Image]): 从主图中分割出的字符图片列表。
+            ques_char_images (list[PIL.Image]): "ques" 中的字符图片列表。
+            weights (dict, optional): 相似度算法的权重。
+
+        Returns:
+            list[tuple]: 一个匹配结果列表，每个元素是 (main_idx, ques_idx, score)。
+        """
+        if weights is None:
+            weights = {'ssim': 1.0, 'hog': 1.0, 'proj': 1.0}
+
+        num_main = len(main_char_images)
+        num_ques = len(ques_char_images)
+
+        # 1. 预处理 "ques" 图像特征
+        ques_features = [self._extract_features(img) for img in ques_char_images]
+
+        # 2. 构建相似度矩阵
+        similarity_matrix = np.zeros((num_main, num_ques))
+
+        for i, main_img in enumerate(main_char_images):
+            # 2a. 分割和校正主图中的字符，并获得4个旋转版本
+            rotated_main_images = self._segment_and_straighten_char(main_img)
+            if not rotated_main_images:
+                continue
+
+            for j in range(num_ques):
+                ques_img_array, ques_hog, ques_proj = ques_features[j]
+                max_score_for_this_pair = -1.0
+
+                # 2b. 遍历4个旋转版本，找到与当前 ques_char 最高的匹配分
+                for rot_img in rotated_main_images:
+                    main_img_array, main_hog, main_proj = self._extract_features(rot_img)
+                    if main_img_array is None:
+                        continue
+                    
+                    # --- 计算加权相似度得分 ---
+                    ssim_score = ssim(main_img_array, ques_img_array, data_range=255)
+                    hog_sim_score = cosine_similarity(main_hog.reshape(1, -1), ques_hog.reshape(1, -1))[0][0]
+                    dist = np.linalg.norm(main_proj - ques_proj)
+                    proj_sim_score = 1.0 / (1.0 + dist)
+                    
+                    total_score = (weights.get('ssim', 0) * ssim_score +
+                                   weights.get('hog', 0) * hog_sim_score +
+                                   weights.get('proj', 0) * proj_sim_score)
+                    
+                    if total_score > max_score_for_this_pair:
+                        max_score_for_this_pair = total_score
+                
+                similarity_matrix[i, j] = max_score_for_this_pair
+
+        # 3. 使用匈牙利算法求解最优匹配
+        # linear_sum_assignment 需要成本矩阵，所以我们用最大相似度减去当前值
+        cost_matrix = np.max(similarity_matrix) - similarity_matrix
+        row_ind, col_ind = linear_sum_assignment(cost_matrix)
+
+        # 4. 整理并返回结果
+        matches = []
+        for r, c in zip(row_ind, col_ind):
+            score = similarity_matrix[r, c]
+            matches.append((r, c, score))
+            
+        # 按分数降序排序
+        matches.sort(key=lambda x: x[2], reverse=True)
+
+        return matches
 
 if __name__ == '__main__':
     # 示例用法，实际运行时请通过 run_matching.py 调用

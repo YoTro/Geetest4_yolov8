@@ -180,6 +180,7 @@ class TrOCRTrainingConfig:
     patience: int = 5 # 早停
     save_total_limit: int = 2 # 限制checkpoint储存
     metric_for_best_model: str = "eval_loss" # 监控指标
+    min_auto_confidence: float = 0.9 # NEW: 自动标注的最低置信度
 
 @dataclass
 class PaddleOCRTrainingConfig:
@@ -191,7 +192,7 @@ class PaddleOCRTrainingConfig:
     model_dir: Optional[str] = "data/models/ch_PP-OCRv2_rec_infer/inference"  # 预训练模型目录，训练时作为起始模型
     # 训练输出的保存目录 (包含checkpoints)
     training_output_dir: str = "runs/paddle_train/best_model"
-    inference_model_dir: str = "data/models/inference" # 最终用于推理的模型目录
+    inference_model_dir: str = "data/models/ch_PP-OCRv4_rec_infer" # 最终用于推理的模型目录
     # 用于相似度匹配/特征提取的特定模型检查点路径 (不含.pdparams扩展名)
     feature_extraction_checkpoint: Optional[str] = "runs/paddle_train/best_model/best_accuracy" 
     # 用于恢复训练的检查点路径 (不含.pdparams扩展名)
@@ -219,7 +220,7 @@ class ImageMatcherConfig:
         'hog': 0.3,
         'proj': 0.6
     })
-    min_match_score: float = 0.45 # 最小匹配分数阈值，低于此阈值则认为匹配失败
+    min_match_score: float = 0.48 # 最小匹配分数阈值，低于此阈值则认为匹配失败
 
 @dataclass
 class OCRConfig:
