@@ -18,9 +18,10 @@ from config import settings
 from .gt4 import GeetestV4
 # 导入重构后的函数式模块
 from utils import image_processor, coordinate_utils
+from utils.proxy_manager import get_proxies
 from . import yolo_inference, manual_fallback
 from .trocr_recognizer import TrOCRRecognizer
-from .paddle_recognizer import PaddleRecognizer, cosine_similarity
+from .paddle_recognizer import PaddleRecognizer
 from .matcher import ImageMatcher # NEW: 导入 ImageMatcher
 
 
@@ -30,13 +31,27 @@ class CaptchaProcessor:
     - 管理自动（YOLO）和手动处理模式。
     - 内置错误计数和模式切换逻辑。
     """
-    def __init__(self, session: Optional[requests.Session] = None):
+    def __init__(self, session: Optional[requests.Session] = None, proxy_source: Optional[str] = None):
         """
         初始化验证码处理器。
         """
         self.settings = settings
         self.session = session or requests.Session()
         self.logger = logging.getLogger(__name__)
+
+        # NEW: 添加代理配置
+        if proxy_source:
+            self.logger.info(f"正在从 '{proxy_source}' 加载代理...")
+            proxies = get_proxies(proxy_source)
+            if proxies:
+                proxy = random.choice(proxies)
+                self.session.proxies = {
+                    "http": proxy,
+                    "https": proxy,
+                }
+                self.logger.info(f"已成功配置代理: {proxy}")
+            else:
+                self.logger.warning("提供了代理来源，但未能加载任何代理。将不使用代理。")
 
         # 核心组件
         self.geetest = GeetestV4(self.settings.geetest.captcha_id, geetest_config=self.settings.geetest, session=self.session)
@@ -60,6 +75,47 @@ class CaptchaProcessor:
             self.logger.warning("ImageMatcher 字典为空。ques 图片识别可能依赖 OCR 引擎或字典生成失败。")
         self.logger.info("验证码处理器初始化完成。")
         self.consecutive_auto_failures = 0
+        self.consecutive_manual_successes = 0 # NEW: 初始化手动模式连续成功计数
+        self.current_mode = "auto" # NEW: 初始模式设置为自动
+        
+        # NEW: 统计相关
+        self.total_attempts = 0
+        self.successful_attempts = 0
+        self.failed_attempts = 0
+
+    def batch_process(self, num_times: int = 1, captcha_id: Optional[str] = None, **kwargs) -> List[Dict[str, Any]]:
+        """
+        批量处理验证码。
+        """
+        self.logger.info(f"开始批量处理 {num_times} 次验证码...")
+        results = []
+        self.total_attempts = 0
+        self.successful_attempts = 0
+        self.failed_attempts = 0
+
+        for i in range(num_times):
+            self.total_attempts += 1
+            self.logger.info(f"--- 批量处理: 第 {i+1}/{num_times} 次尝试 ---")
+            result = self.process(captcha_id=captcha_id, **kwargs)
+            results.append(result)
+            
+            if result['success']:
+                self.successful_attempts += 1
+                self.logger.info(f"第 {i+1} 次处理成功。")
+            else:
+                self.failed_attempts += 1
+                self.logger.warning(f"第 {i+1} 次处理失败。")
+            
+            time.sleep(random.uniform(self.settings.geetest.min_batch_interval, self.settings.geetest.max_batch_interval))
+        
+        self.logger.info(f"批量处理完成。共处理 {self.total_attempts} 次。")
+        if self.total_attempts > 0:
+            success_rate = (self.successful_attempts / self.total_attempts) * 100
+            failure_rate = (self.failed_attempts / self.total_attempts) * 100
+            self.logger.info(f"统计结果: 成功 {self.successful_attempts} 次, 失败 {self.failed_attempts} 次。")
+            self.logger.info(f"成功率: {success_rate:.2f}%, 失败率: {failure_rate:.2f}%.")
+        return results
+
     def process(self, captcha_id: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         """
         处理验证码的主入口点。
@@ -251,7 +307,7 @@ class CaptchaProcessor:
         w_data = self.geetest.generate_w_data(load_data, userresponse=geetest_coords, passtime=int(time.time() * 1000) % 5000 + 2000)
         verify_result = self.geetest.verify(w=w_data['w'], load_data=load_data)
 
-        success = verify_result.get("status") == "success"
+        success = verify_result.get("status") == "success" and verify_result.get("data", {}).get("result") != "fail"
         return {"success": success, "details": verify_result, "mode": "auto"}
 
 
@@ -305,7 +361,7 @@ class CaptchaProcessor:
         w_data = self.geetest.generate_w_data(load_data, userresponse=user_coords, passtime=passtime)
         verify_result = self.geetest.verify(w=w_data['w'], load_data=load_data)
 
-        success = verify_result.get("status") == "success"
+        success = verify_result.get("status") == "success" and verify_result.get("result") != "fail"
         return {"success": success, "details": verify_result, "mode": "manual"}
     
     def _update_mode(self, success: bool):

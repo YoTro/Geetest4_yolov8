@@ -384,7 +384,8 @@ def export_single_model(
         except (
             ModuleNotFoundError
         ):  # Encryption is not needed if the module cannot be imported
-            print("Skipping import of the encryption module")
+            # print("Skipping import of the encryption module")
+            pass
         paddle_version = version.parse(paddle.__version__)
         if config["Global"].get("export_with_pir", True):
             assert (

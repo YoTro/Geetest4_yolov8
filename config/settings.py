@@ -98,7 +98,9 @@ class GeetestConfig:
     })
     # AES加密的初始化向量 (IV)
     iv_str_hex: str = "0000000000000000"
-
+    min_batch_interval: float = 2.0 # 批量处理时每次请求之间的最小间隔
+    max_batch_interval: float = 5.0 # 批量处理时每次请求之间的最大间隔
+    
 @dataclass
 class ModeSwitchConfig:
     """模式切换配置"""

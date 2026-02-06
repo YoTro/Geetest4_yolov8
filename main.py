@@ -46,10 +46,12 @@ def main():
     process_parser = subparsers.add_parser("run", help="运行验证码处理器，处理单个验证码")
     process_parser.add_argument("--mode", choices=["auto", "manual"], default="auto", help="处理模式 (默认: auto)")
     process_parser.add_argument("--captcha-id", help=f"要处理的验证码ID (默认: {settings.geetest.captcha_id})")
+    process_parser.add_argument("--proxy", help="[可选] 代理来源 (e.g., 'http://user:pass@host:port', URL或文件路径)")
     process_parser.add_argument("--yolo-model", help=f"要使用的YOLO模型路径 (覆盖config中的设置，默认: {settings.yolo_inference.model_path})")
     process_parser.add_argument("--ocr-engine", choices=["trocr", "paddle"], help=f"要使用的OCR引擎 (覆盖config中的设置，默认: {settings.ocr.engine})")
     process_parser.add_argument("--trocr-model", help=f"要使用的TrOCR模型名称或路径 (覆盖config中的设置，默认: {settings.ocr.trocr.model_name})")
     process_parser.add_argument("--paddle-model-dir", help=f"要使用的PaddleOCR推理模型目录 (覆盖config中的设置，默认: {settings.ocr.paddle.model_dir})")
+    process_parser.add_argument("--num-times", type=int, default=1, help="批量处理验证码的次数 (默认: 1)")
     
     # --- 数据集准备命令 ---
     prep_parser = subparsers.add_parser("prepare", help="从原始数据文件夹准备YOLOv8数据集")
@@ -122,7 +124,7 @@ def main():
     collect_parser = subparsers.add_parser("collect", help="收集训练图片，支持代理或延时降频")
     collect_parser.add_argument("--samples", type=int, default=100, help="要收集的样本数量")
     collect_parser.add_argument("--output", default=settings.data_collection.output_dir, help="收集数据的输出目录")
-    collect_parser.add_argument("--proxy-source", help="[可选] 代理来源 (URL或文件路径)。如果提供，将启用多线程代理模式")
+    collect_parser.add_argument("--proxy", help="[可选] 代理来源 (URL或文件路径)。如果提供，将启用多线程代理模式")
     collect_parser.add_argument("--captcha-id", default=settings.geetest.captcha_id, help="要采集的Geetest验证码ID")
     collect_parser.add_argument("--workers", type=int, default=10, help="并发线程数 (仅在代理模式下生效)")
     collect_parser.add_argument("--delay", type=float, default=3.0, help="无代理模式下，两次请求之间的基础延迟秒数")
@@ -188,14 +190,24 @@ def main():
                 settings.ocr.paddle.model_dir = args.paddle_model_dir
                 logger.info(f"PaddleOCR推理模型目录已通过命令行参数覆盖为: {settings.ocr.paddle.model_dir}")
 
-            processor = CaptchaProcessor()
+            processor = CaptchaProcessor(proxy_source=args.proxy)
             processor.current_mode = args.mode
-            result = processor.process(captcha_id=args.captcha_id)
             
-            print("\n" + "="*50)
-            print(f"{args.mode} 模式运行结果:")
-            print(json.dumps(result, ensure_ascii=False, indent=2))
-            print("="*50)
+            if args.num_times > 1:
+                logger.info(f"--- 批量处理模式: 将运行 {args.num_times} 次 ---")
+                results = processor.batch_process(num_times=args.num_times, captcha_id=args.captcha_id)
+#                print("\n" + "="*50)
+#                print(f"{args.mode} 模式批量运行结果:")
+#                for i, res in enumerate(results):
+#                    print(f"--- 第 {i+1} 次运行结果 ---")
+#                    print(json.dumps(res, ensure_ascii=False, indent=2))
+#                print("="*50)
+            else:
+                result = processor.process(captcha_id=args.captcha_id)
+                print("\n" + "="*50)
+                print(f"{args.mode} 模式运行结果:")
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                print("="*50)
 
         elif args.command == "prepare":
             logger.info("--- 开始准备数据集 ---")
@@ -214,7 +226,7 @@ def main():
                 num_samples=args.samples,
                 output_dir=args.output,
                 captcha_id=args.captcha_id,
-                proxy_source=args.proxy_source,
+                proxy_source=args.proxy,
                 max_workers=args.workers,
                 delay=args.delay
             )

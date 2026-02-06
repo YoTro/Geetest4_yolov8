@@ -14,7 +14,7 @@
 如果您正在使用基于 Debian/Ubuntu 的 Linux 发行版 (或基于此的 Docker 镜像)，您可以运行以下单行命令来安装所有系统和 Python 依赖，并下载预训练的 PaddleOCR 模型。
 
 ```bash
-apt-get update && apt install vim file unzip python3-tk && \
+apt-get update && apt install vim file unzip python3-tk ccache && \
 python3 -m pip install paddlepaddle-gpu==3.3.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu118/ && \
 pip3 install -r requirements.txt && \
 wget -nc -P data/models https://paddleocr.bj.bcebos.com/PP-OCRv4/chinese/ch_PP-OCRv4_rec_train.tar && \

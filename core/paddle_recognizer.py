@@ -11,17 +11,6 @@ import yaml
 from libs.ppocr.modeling.architectures import build_model
 from libs.ppocr.utils.save_load import load_pretrained_params
 
-def cosine_similarity(vec1, vec2):
-    """计算两个向量之间的余弦相似度"""
-    vec1 = vec1.flatten()
-    vec2 = vec2.flatten()
-    dot_product = np.dot(vec1, vec2)
-    norm_vec1 = np.linalg.norm(vec1)
-    norm_vec2 = np.linalg.norm(vec2)
-    if norm_vec1 == 0 or norm_vec2 == 0:
-        return 0.0
-    return dot_product / (norm_vec1 * norm_vec2)
-
 class PaddleRecognizer:
     def __init__(self, model_name=None):
         self.logger = logging.getLogger(__name__)
@@ -38,67 +27,7 @@ class PaddleRecognizer:
         except Exception as e:
             self.logger.error(f"PaddleRecognizer: Failed to initialize standard inference engine: {e}", exc_info=True)
             self.recognizer = None
-
-        self.feature_extractor = None
-        # Use configurable feature_extraction_checkpoint
-        # Note: If this is None, _load_feature_extractor will log an error.
-        self.feature_extractor_checkpoint_path = self.ocr_cfg.feature_extraction_checkpoint 
-
-    def _load_feature_extractor(self):
-        """Lazy-loads the model for feature extraction."""
-        if self.feature_extractor_checkpoint_path is None:
-            self.logger.error("feature_extraction_checkpoint is not set in config/settings.py. Cannot load feature extractor.")
-            self.feature_extractor = None
-            return
-
-        self.logger.info("--- 正在加载用于特征提取的 PaddleOCR 模型 ---")
-        try:
-            template_path = os.path.join(self.path_cfg.base_dir, "config", "paddle_ocr_template.yml")
-            with open(template_path, 'r', encoding='utf-8') as f:
-                config = yaml.safe_load(f)
-
-            config['Architecture']['Head'] = None
             
-            # Use global config for these values
-            config['Global'] = {
-                'character_dict_path': os.path.join(self.path_cfg.base_dir, self.ocr_cfg.char_dict_path),
-                'use_space_char': self.ocr_cfg.use_space_char, # Use config value
-                'max_text_length': self.ocr_cfg.max_text_length # Use config value
-            }
-
-            model = build_model(config['Architecture'])
-            
-            # Use configurable feature_extraction_checkpoint_path
-            checkpoint_path = os.path.join(self.path_cfg.base_dir, self.feature_extractor_checkpoint_path)
-            
-            self.logger.info(f"从以下位置加载权重: {checkpoint_path}.pdparams")
-            load_pretrained_params(model, checkpoint_path)
-            
-            model.eval()
-            self.feature_extractor = model
-            self.logger.info("--- 特征提取模型加载成功 ---")
-        except Exception as e:
-            self.logger.error(f"加载特征提取模型失败: {e}", exc_info=True)
-            self.feature_extractor = None
-
-    def get_embedding(self, image):
-        if self.feature_extractor is None:
-            self._load_feature_extractor()
-            if self.feature_extractor is None:
-                return None
-
-        if isinstance(image, Image.Image):
-            image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-        
-        preprocessed_img = self.recognizer._resize_norm_img(image)
-        img_tensor = paddle.to_tensor(np.expand_dims(preprocessed_img, axis=0))
-
-        with paddle.no_grad():
-            features = self.feature_extractor(img_tensor)
-        
-        embedding = paddle.mean(features, axis=1).numpy()
-        return embedding
-
     def recognize(self, image) -> Tuple[str, float]: # Return text and confidence
         if self.recognizer is None: return "", 0.0
         if isinstance(image, Image.Image):
