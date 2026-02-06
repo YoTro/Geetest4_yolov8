@@ -196,12 +196,12 @@ def main():
             if args.num_times > 1:
                 logger.info(f"--- 批量处理模式: 将运行 {args.num_times} 次 ---")
                 results = processor.batch_process(num_times=args.num_times, captcha_id=args.captcha_id)
-#                print("\n" + "="*50)
-#                print(f"{args.mode} 模式批量运行结果:")
-#                for i, res in enumerate(results):
-#                    print(f"--- 第 {i+1} 次运行结果 ---")
-#                    print(json.dumps(res, ensure_ascii=False, indent=2))
-#                print("="*50)
+                print("\n" + "="*50)
+                print(f"{args.mode} 模式批量运行结果:")
+                for i, res in enumerate(results):
+                    print(f"--- 第 {i+1} 次运行结果 ---")
+                    print(json.dumps(res, ensure_ascii=False, indent=2))
+                print("="*50)
             else:
                 result = processor.process(captcha_id=args.captcha_id)
                 print("\n" + "="*50)

@@ -94,7 +94,28 @@ class GeetestConfig:
     # 默认请求配置
     default_config: Dict[str, Any] = field(default_factory=lambda: {
         "pt": 1,
-        "payload_protocol": 1
+        "payload_protocol": 1,
+        "ep": "123",
+        "biht": "1426265548",
+        "gee_guard": {
+            "roe": {
+                "aup": "3",
+                "sep": "3",
+                "egp": "3",
+                "auh": "3",
+                "rew": "3",
+                "snh": "3",
+                "res": "3",
+                "cdc": "3"
+            }
+        },
+        "fwjn": "DJkH",# 手动更换
+        "em": {
+            "ph": 0, "cp": 0, "ek": "11", "wd": 1,
+            "nt": 0, "si": 0, "sc": 0
+        },
+        "lang": "zh",
+        "geetest": "captcha" 
     })
     # AES加密的初始化向量 (IV)
     iv_str_hex: str = "0000000000000000"

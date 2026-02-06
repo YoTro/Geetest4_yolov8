@@ -128,14 +128,45 @@ w = AES(ciphertext hex) + RSA(symmetric_key hex)
 
 ```json
 {
-  "passtime": 1234,
-  "userresponse": [[x,y]],
+  "passtime": 5706,
+  "userresponse": [
+    [8700, 4850],
+    [2367, 2050],
+    [5667, 1550]
+  ],
+  "device_id": "",
   "lot_number": "...",
   "pow_msg": "...",
   "pow_sign": "...",
-  "ep": "...",
-  "gee_guard": { ... },
-  "em": { ... }
+  "geetest": "...",
+  "lang": "zh",
+  "ep": "123",
+  "biht": "...",
+  "gee_guard": {
+    "roe": {
+      "aup": "3",
+      "sep": "3",
+      "egp": "3",
+      "auh": "3",
+      "rew": "3",
+      "snh": "3",
+      "res": "3",
+      "cdc": "3"
+    }
+  },
+  "fwjn": "DJkH",#手动更换
+  "74dc": {
+    "4dcf8a": "..."#定期检查
+  },
+  "em": {
+    "ph": 0,
+    "cp": 0,
+    "ek": "11",
+    "wd": 1,
+    "nt": 0,
+    "si": 0,
+    "sc": 0
+  }
 }
 ```
 

@@ -147,6 +147,16 @@ class GeetestV4:
         return ''.join(random.choice('0123456789abcdef') for _ in range(16))
 
     @staticmethod
+    def _generate_dynamic_strings(lot_number):
+        """生成动态字符串（用于混淆）"(n[11:14])+.+(n[12:14]+n[6:8])": _ᕵᕺᖀᖉ(95) """
+        n = lot_number
+        s = {
+            n[11:15]: {
+                n[12:15]+n[6:9]: n[21:29]
+            }
+        }
+        return s
+    @staticmethod
     def _rsa_encrypt_js_style(message: str, rsa_n_hex: str, rsa_e_hex: str) -> str:
         rsa_n = int(rsa_n_hex, 16)
         rsa_e = int(rsa_e_hex, 16)
@@ -168,7 +178,7 @@ class GeetestV4:
         
         data_to_encrypt = {
             "passtime": passtime, "userresponse": userresponse, "device_id": device_id,
-            "lot_number": parsed_data["lot_number"], "pow_msg": "", "pow_sign": "",
+            "lot_number": parsed_data["lot_number"], "pow_msg": "", "pow_sign": "", **self._generate_dynamic_strings(parsed_data["lot_number"]),
             **self.internal_config
         }
 
