@@ -144,172 +144,172 @@ class CaptchaProcessor:
         return result
 
     def _process_auto(self, load_data: Dict[str, Any]) -> Dict[str, Any]:
-        """使用智能混合策略自动处理验证码：优先文本匹配，对任何未匹配项启用相似度匹配。"""
+        """
+        使用模块化策略自动处理验证码。
+        该方法作为调度器，依次调用各个处理阶段。
+        """
         if self.yolo_model is None: return {"success": False, "error": "YOLO model not loaded.", "mode": "auto"}
         if self.ocr_recognizer is None: return {"success": False, "error": "Recognizer not initialized.", "mode": "auto"}
 
-        # --- 1. 数据准备 ---
+        # 步骤 1: 数据准备 (下载图片, YOLO检测)
+        main_image, ques_images, detections = self._prepare_data(load_data)
+        if main_image is None or ques_images is None or detections is None:
+            error_msg = "Data preparation failed: Could not acquire necessary images or detections."
+            self.logger.error(error_msg)
+            return {"success": False, "error": error_msg, "mode": "auto"}
+
+        # 步骤 2: 实体识别 (识别问题文字和检测框文字)
+        ques_data, detections = self._recognize_entities(main_image, ques_images, detections)
+
+        # 步骤 3: 坐标求解 (使用混合策略匹配坐标)
+        final_coords = self._solve_coordinates(main_image, ques_images, detections, ques_data)
+        if final_coords is None or any(c is None for c in final_coords):
+            error_msg = f"Coordinate solving failed. Could not find coordinates for all targets. Coords: {final_coords}"
+            self.logger.error(error_msg)
+            return {"success": False, "error": error_msg, "mode": "auto"}
+
+        # 步骤 4: 提交验证
+        return self._submit_solution(final_coords, load_data, main_image, ques_images)
+
+    def _prepare_data(self, load_data: Dict[str, Any]) -> Tuple[Optional[Any], Optional[List[Any]], Optional[List[Dict]]]:
+        """
+        步骤 1: 数据准备。下载图片并运行YOLO检测。
+        返回 (main_image, ques_images, detections)，任何失败则返回 None。
+        """
+        self.logger.info("--- 自动处理 步骤 1: 数据准备 ---")
         image_urls = self.geetest.extract_image_urls(load_data)
-        if not image_urls.get("ques_imgs"): return {"success": False, "error": "No 'ques_imgs' in captcha data.", "mode": "auto"}
+        if not image_urls.get("ques_imgs"):
+            self.logger.error("No 'ques_imgs' found in captcha data.")
+            return None, None, None
 
         main_image = image_processor.download_image(self.session, image_urls["main_img"])
-        if main_image is None: return {"success": False, "error": "Failed to download captcha image.", "mode": "auto"}
+        if main_image is None:
+            self.logger.error("Failed to download main captcha image.")
+            return None, None, None
 
         ques_images = [image_processor.download_image(self.session, url) for url in image_urls["ques_imgs"]]
-        if any(img is None for img in ques_images): return {"success": False, "error": "Failed to download a question image.", "mode": "auto"}
+        if any(img is None for img in ques_images):
+            self.logger.error("Failed to download one or more question images.")
+            return None, None, None
 
         detections = yolo_inference.detect(self.yolo_model, main_image, self.yolo_class_names, self.settings.yolo_inference)
-        if not detections: return {"success": False, "error": "No objects detected by YOLO model.", "mode": "auto"}
+        if not detections:
+            self.logger.warning("No objects detected by YOLO model.")
+            # 返回空列表而不是None，因为后续步骤可能仍需处理图片
+            return main_image, ques_images, [] 
+        
+        self.logger.info(f"数据准备完成: 1张主图, {len(ques_images)}张问题图, {len(detections)}个检测目标。")
+        return main_image, ques_images, detections
 
-        # --- 2. 识别所有相关文字 ---
-        self.logger.info("--- 步骤 1: 识别 'ques' 图片和检测区域 ---")
+    def _recognize_entities(self, main_image: Any, ques_images: List[Any], detections: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
+        """
+        步骤 2: 实体识别。对所有图片进行文字识别。
+        """
+        self.logger.info("--- 自动处理 步骤 2: 实体识别 ---")
         ques_data = [{'index': i, 'image': img} for i, img in enumerate(ques_images)]
         
         for item in ques_data:
-            # 优先使用 ImageMatcher 识别 ques 图片
+            # 优先使用 ImageMatcher
             if self.image_matcher.dictionary:
-                char, score = self.image_matcher.find_best_match(
-                    item['image'], self.settings.image_matcher.default_weights
-                )
+                char, score = self.image_matcher.find_best_match(item['image'], self.settings.image_matcher.default_weights)
                 if char and score >= self.settings.image_matcher.min_match_score:
-                    item['char'] = char
-                    item['score'] = score
-                    item['recognized_by_imagematcher'] = True # NEW: Mark as recognized by ImageMatcher
-                    self.logger.info(f"Ques {item['index']}: ImageMatcher 识别结果 -> '{item['char']}' (得分: {item['score']:.4f})")
-                    continue # 成功匹配，跳过OCR回退
-                else:
-                    self.logger.warning(f"Ques {item['index']}: ImageMatcher 失败或得分过低 ({score:.4f} < {self.settings.image_matcher.min_match_score:.4f})，回退到 OCR 识别。")
-            else:
-                self.logger.warning(f"Ques {item['index']}: ImageMatcher 字典未加载，直接使用 OCR 识别。")
+                    item.update({'char': char, 'score': score, 'recognized_by': 'imagematcher'})
+                    self.logger.info(f"Ques {item['index']}: ImageMatcher 识别 -> '{item['char']}' (得分: {item['score']:.4f})")
+                    continue
+                self.logger.warning(f"Ques {item['index']}: ImageMatcher 失败或低分 ({score:.4f})，回退到 OCR。")
             
-            # 回退到 OCR 识别
+            # 回退到 OCR
             text, score = self.ocr_recognizer.recognize(item['image'])
-            item['char'] = text[0] if text else '' # Only take the first char for ques images
-            item['score'] = score
-            self.logger.info(f"Ques {item['index']}: OCR 识别结果 -> '{item['char']}' (置信度: {item['score']:.2f}, 原始识别: '{text}')")
+            item.update({'char': text[0] if text else '', 'score': score, 'recognized_by': 'ocr'})
+            self.logger.info(f"Ques {item['index']}: OCR 识别 -> '{item['char']}' (置信度: {item['score']:.2f})")
 
         for i, det in enumerate(detections):
             det['det_index'] = i
             det['char'], det['score'] = self.ocr_recognizer.recognize(main_image.crop(det['bbox']))
-            self.logger.debug(f"Det {det['det_index']}: 文本识别结果 -> '{det['char']}' (置信度: {det['score']:.2f})")
-
-        # --- 3. 优先执行文本匹配 ---
-        self.logger.info("--- 步骤 2: 优先执行文本匹配 ---")
-        final_coords = [None] * len(ques_data)
-        matched_det_indices = set() # 追踪已被匹配的检测区域的原始索引
+            self.logger.debug(f"Det {det['det_index']}: OCR 识别 -> '{det['char']}' (置信度: {det['score']:.2f})")
         
-        min_ocr_confidence_for_text_match = getattr(self.settings.ocr, self.settings.ocr.engine).min_auto_confidence # Use the same confidence for text matching
+        return ques_data, detections
 
+    def _solve_coordinates(self, main_image: Any, ques_images: List[Any], detections: List[Dict], ques_data: List[Dict]) -> Optional[List[Optional[Tuple[int, int]]]]:
+        """
+        步骤 3: 坐标求解。使用混合策略匹配坐标。
+        """
+        self.logger.info("--- 自动处理 步骤 3: 坐标求解 ---")
+        final_coords = [None] * len(ques_data)
+        
+        # 策略1: 优先文本匹配
+        self.logger.info("求解策略 1: 优先文本匹配。")
+        matched_det_indices = set()
+        min_ocr_conf = getattr(self.settings.ocr, self.settings.ocr.engine).min_auto_confidence
+        
         available_dets_map = defaultdict(list)
         for det in detections:
-            # Only consider detections with single char and sufficient confidence for text matching
-            if det['char'] and len(det['char']) == 1 and det['score'] >= min_ocr_confidence_for_text_match:
+            if det['char'] and len(det['char']) == 1 and det['score'] >= min_ocr_conf:
                 available_dets_map[det['char']].append(det)
 
-        for ques_item in ques_data:
-            char_to_find = ques_item['char']
-            is_match_found = False
+        for item in ques_data:
+            char, score, source = item['char'], item['score'], item['recognized_by']
             
-            # Determine appropriate confidence threshold for text matching
-            confidence_meets_threshold = False
-            if char_to_find and len(char_to_find) == 1:
-                if ques_item.get('recognized_by_imagematcher', False):
-                    # If recognized by ImageMatcher, it already passed ImageMatcher's min_match_score.
-                    # So, it's considered good enough for text matching.
-                    confidence_meets_threshold = True 
-                else:
-                    # If not recognized by ImageMatcher (i.e., by OCR or failed both), 
-                    # then apply the OCR confidence threshold.
-                    confidence_meets_threshold = (ques_item['score'] >= min_ocr_confidence_for_text_match)
-                
-                if confidence_meets_threshold:
-                    if available_dets_map[char_to_find]:
-                        sorted_dets = sorted(available_dets_map[char_to_find], key=lambda d: d['center'][0])
-                        for det_candidate in sorted_dets:
-                            if det_candidate['det_index'] not in matched_det_indices:
-                                final_coords[ques_item['index']] = det_candidate['center']
-                                matched_det_indices.add(det_candidate['det_index'])
-                                available_dets_map[char_to_find].remove(det_candidate)
-                                self.logger.info(f"文本匹配: Ques {ques_item['index']} ('{char_to_find}') -> 坐标 {det_candidate['center']}")
-                                is_match_found = True
-                                break
+            passes_threshold = (source == 'imagematcher' and score >= self.settings.image_matcher.min_match_score) or \
+                               (source == 'ocr' and score >= min_ocr_conf)
+
+            if char and len(char) == 1 and passes_threshold and available_dets_map[char]:
+                sorted_dets = sorted(available_dets_map[char], key=lambda d: d['center'][0])
+                for det_candidate in sorted_dets:
+                    if det_candidate['det_index'] not in matched_det_indices:
+                        final_coords[item['index']] = det_candidate['center']
+                        matched_det_indices.add(det_candidate['det_index'])
+                        available_dets_map[char].remove(det_candidate)
+                        self.logger.info(f"文本匹配成功: Ques {item['index']} ('{char}') -> 坐标 {det_candidate['center']}")
+                        break
+
+        # 策略2: 如果有任何未匹配项，则执行全局高级匹配
+        if any(c is None for c in final_coords):
+            self.logger.info("求解策略 2: 文本匹配未完成，执行全局高级匹配。")
             
-            if not is_match_found:
-                # If text matching was not even attempted (e.g., ques OCR was bad) or it failed
-                pass # This ques_item will remain None in final_coords and be picked up by similarity matching
+            main_char_images = [main_image.crop(det['bbox']) for det in detections]
+            if not main_char_images or not ques_images:
+                self.logger.warning("未能为高级匹配生成有效图像列表，跳过。")
+                return final_coords
 
+            self.logger.info(f"调用 ImageMatcher 进行全局匹配: {len(ques_images)} vs {len(main_char_images)}")
+            matches = self.image_matcher.find_best_matches_for_main_image(
+                main_char_images=main_char_images,
+                ques_char_images=ques_images,
+                weights=self.settings.image_matcher.default_weights
+            )
 
-        # --- 4. 对所有未匹配项进行相似度匹配 ---
-        unmatched_ques_for_similarity = []
-        for ques_item in ques_data:
-            if final_coords[ques_item['index']] is None:
-                unmatched_ques_for_similarity.append(ques_item)
+            # 全局匹配结果将完全覆盖之前的任何结果
+            final_coords = [None] * len(ques_data)
+            for main_idx, ques_idx, score in matches:
+                if final_coords[ques_idx] is None: # 匈牙利算法确保每个ques只有一个最优匹配
+                    final_coords[ques_idx] = detections[main_idx]['center']
+                    self.logger.info(f"全局高级匹配: Ques {ques_idx} -> 坐标 {detections[main_idx]['center']} (得分: {score:.4f})")
         
-        if unmatched_ques_for_similarity:
-            self.logger.info(f"--- 步骤 3: 文本匹配未完成，对所有 {len(ques_data)} 个字符执行全局高级匹配 ---")
-            
-            # --- 全局高级匹配逻辑 ---
-            # 策略：一旦需要高级匹配，就对所有图片进行全局最优分配，覆盖之前的文本匹配结果。
-            main_char_images_to_match = [main_image.crop(det['bbox']) for det in detections]
-            ques_char_images_to_match = ques_images # 使用所有原始ques图片
+        return final_coords
 
-            if main_char_images_to_match and ques_char_images_to_match:
-                self.logger.info(f"准备进行全局高级匹配: {len(ques_char_images_to_match)} 个 ques 图片 vs {len(main_char_images_to_match)} 个检测区域。")
-                self.logger.info("调用 ImageMatcher 的 find_best_matches_for_main_image 进行匹配...")
-                
-                matches = self.image_matcher.find_best_matches_for_main_image(
-                    main_char_images=main_char_images_to_match,
-                    ques_char_images=ques_char_images_to_match,
-                    weights=self.settings.image_matcher.default_weights
-                )
+    def _submit_solution(self, final_coords: List[Tuple[int, int]], load_data: Dict[str, Any], main_image: Any, ques_images: List[Any]) -> Dict[str, Any]:
+        """
+        步骤 4: 提交验证。
+        """
+        self.logger.info("--- 自动处理 步骤 4: 提交验证 ---")
+        self.logger.info(f"最终确定的点击坐标顺序: {final_coords}")
 
-                # 重置 final_coords，因为全局匹配的结果将完全覆盖它
-                final_coords = [None] * len(ques_data)
-                
-                # 注意：这里的 main_idx 和 ques_idx 分别对应 `detections` 和 `ques_images` 列表的索引
-                for main_idx, ques_idx, score in matches:
-                    # 如果当前 ques_idx 已经有更高分的匹配，则跳过（不太可能发生，因为匈牙利算法已找到最优解）
-                    if final_coords[ques_idx] is not None:
-                        continue
-
-                    matched_center = detections[main_idx]['center']
-                    final_coords[ques_idx] = matched_center
-                    self.logger.info(f"全局高级匹配: Ques {ques_idx} -> 坐标 {matched_center} (得分: {score:.4f})")
-            else:
-                self.logger.warning("未能为待匹配项生成有效的图像列表，跳过高级匹配。")
-            # --- 全局高级匹配逻辑结束 ---
-
-        # --- 5. 最终验证 ---
-        # Debugging: Draw and save click points if enabled
+        # 保存调试图像
         if settings.save_debug_images:
-            debug_output_path = os.path.join(settings.paths.base_dir, settings.paths.debug_output_dir)
-            if not os.path.exists(debug_output_path):
-                os.makedirs(debug_output_path)
-            
-            self.logger.info(f"保存调试图片到: {debug_output_path}")
-            # Ensure final_coords does not contain None before drawing
-            valid_coords = [p for p in final_coords if p is not None]
-            annotated_image = image_processor.draw_points_on_image(main_image, valid_coords, ques_images=ques_images)
-            
-            timestamp = int(time.time())
-            filename = f"debug_image_{timestamp}.png"
-            save_path = os.path.join(debug_output_path, filename)
-            
+            debug_path = os.path.join(settings.paths.base_dir, settings.paths.debug_output_dir)
+            os.makedirs(debug_path, exist_ok=True)
+            annotated_image = image_processor.draw_points_on_image(main_image, final_coords, ques_images=ques_images)
+            save_path = os.path.join(debug_path, f"debug_image_{int(time.time())}.png")
             annotated_image.save(save_path)
             self.logger.info(f"调试图片已保存至: {save_path}")
 
-        if any(c is None for c in final_coords):
-            self.logger.error(f"所有策略处理完毕，但未能为所有目标字符找到坐标。最终坐标: {final_coords}")
-            return {"success": False, "error": "Could not find coordinates for all target characters.", "mode": "auto"}
-
-        self.logger.info(f"最终确定的点击坐标顺序: {final_coords}")
         geetest_coords = coordinate_utils.convert_to_geetest_format(final_coords, (main_image.width, main_image.height))
         w_data = self.geetest.generate_w_data(load_data, userresponse=geetest_coords, passtime=int(time.time() * 1000) % 5000 + 2000)
         verify_result = self.geetest.verify(w=w_data['w'], load_data=load_data)
 
         success = verify_result.get("status") == "success" and verify_result.get("data", {}).get("result") != "fail"
         return {"success": success, "details": verify_result, "mode": "auto"}
-
 
     def _process_manual(self, load_data: Dict[str, Any]) -> Dict[str, Any]:
         """使用手动模式处理验证码。(根据环境切换GUI/CLI)"""
