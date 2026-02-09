@@ -4,7 +4,7 @@
 import logging
 import requests
 from typing import Tuple, Optional, Union, List
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont # Add ImageDraw, ImageFont
 import io
 import base64
 import numpy as np
@@ -175,3 +175,71 @@ def draw_points_on_image(img: Image.Image, points: List[Tuple[int, int]], ques_i
 
     return Image.fromarray(img_np)
 
+def generate_char_candidates(img_pil: Image.Image) -> List[Image.Image]:
+    """
+    从包含单个字符的图像中分割、校正并生成多个方向的候选图像。
+    1. 使用 GrabCut 分割前景。
+    2. 使用 minAreaRect 校正字符的倾斜角度。
+    3. 生成 0, 90, 180, 270 度四个主方向的候选图，以解决方向模糊问题。
+    """
+    if img_pil is None:
+        return []
+    img_cv = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
+    mask = np.zeros(img_cv.shape[:2], np.uint8)
+    # 为GrabCut创建一个稍小的矩形以确保边缘在矩形内
+    rect_for_grabcut = (1, 1, img_cv.shape[1] - 2, img_cv.shape[0] - 2)
+    if rect_for_grabcut[2] <= 0 or rect_for_grabcut[3] <= 0:
+        return [] # 避免无效矩形
+
+    bgdModel = np.zeros((1, 65), np.float64)
+    fgdModel = np.zeros((1, 65), np.float64)
+
+    try:
+        cv2.grabCut(img_cv, mask, rect_for_grabcut, bgdModel, fgdModel, 10, cv2.GC_INIT_WITH_RECT)
+    except Exception:
+        return []
+
+    mask2 = np.where((mask == 2) | (mask == 0), 0, 1).astype('uint8')
+    
+    contours, _ = cv2.findContours(mask2, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return []
+
+    largest_contour = max(contours, key=cv2.contourArea)
+    center, size, angle = cv2.minAreaRect(largest_contour)
+    size = tuple(map(int, size))
+
+    if size[0] == 0 or size[1] == 0:
+        return []
+
+    # --- 步骤1: 生成一个仅校正了倾斜的基础图片（不关心其主方向）---
+    img_bgra = cv2.cvtColor(img_cv, cv2.COLOR_BGR2BGRA)
+    img_bgra[:, :, 3] = mask2 * 255
+    
+    M = cv2.getRotationMatrix2D(center, angle, 1.0)
+    img_rotated_fg = cv2.warpAffine(img_bgra, M, (img_bgra.shape[1], img_bgra.shape[0]))
+
+    channels = cv2.split(img_rotated_fg)
+    cropped_channels = [cv2.getRectSubPix(c, size, center) for c in channels]
+    img_cropped_fg = cv2.merge(cropped_channels)
+
+    if img_cropped_fg is None or img_cropped_fg.shape[0] == 0 or img_cropped_fg.shape[1] == 0:
+        return []
+        
+    h, w = img_cropped_fg.shape[:2]
+    background_cv = np.full((h, w, 3), 255, dtype=np.uint8)
+    fg = img_cropped_fg[:, :, :3]
+    alpha = img_cropped_fg[:, :, 3]
+    alpha_3ch = cv2.merge([alpha, alpha, alpha])
+    composite = np.uint8(fg * (alpha_3ch / 255.0) + background_cv * (1.0 - alpha_3ch / 255.0))
+    
+    base_img = Image.fromarray(cv2.cvtColor(composite, cv2.COLOR_BGR2RGB))
+
+    # --- 步骤2: 从基础图片暴力生成4个主方向的最终候选图 ---
+    final_images = []
+    for rot_angle in [0, 90, 180, 270]:
+        # expand=True 确保旋转后内容完整，fillcolor='white' 填充扩展出的背景
+        rotated_img = base_img.rotate(rot_angle, expand=True, fillcolor='white')
+        final_images.append(rotated_img)
+
+    return final_images

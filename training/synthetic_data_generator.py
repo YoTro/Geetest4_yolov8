@@ -11,39 +11,43 @@ from config.settings import settings
 from utils.text_drawing_utils import get_system_font_path, get_chinese_chars_from_unicode_range # NEW: Import char generator
 
 class TrOCRDataGenerator:
-    def __init__(self, num_images: int, device: str = "cpu"):
+    def __init__(self, num_images: int, train_val_split: float = 0.9, device: str = "cpu"):
         self.num_images = num_images
+        self.train_val_split = train_val_split
         
-        # Output directory for generated synthetic data
-        self.output_dir = os.path.join(settings.paths.base_dir, settings.paths.synthetic_ques_data_dir)
-        self.image_dir = os.path.join(self.output_dir, "images")
-        self.label_file = os.path.join(self.output_dir, "labels.jsonl") # Changed from metadata.jsonl for consistency
+        # Base output directory
+        self.output_dir = Path(settings.paths.base_dir) / settings.paths.synthetic_main_data_dir
+        
+        # Define standard train/val paths
+        self.train_image_dir = self.output_dir / "images" / "train"
+        self.val_image_dir = self.output_dir / "images" / "val"
+        self.train_label_file = self.output_dir / "labels" / "train" / "rec_gt_train.txt"
+        self.val_label_file = self.output_dir / "labels" / "val" / "rec_gt_val.txt"
 
         # Background images directory
-        self.background_dir = os.path.join(settings.paths.base_dir, settings.paths.background_images_dir)
+        self.background_dir = Path(settings.paths.base_dir) / settings.paths.background_images_dir
         
         self.device = device
-        self.font_path = get_system_font_path('SimHei') # NEW: Use the utility function
-        self.char_dict_full_path = os.path.join(settings.paths.base_dir, settings.paths.char_dict_path)
-        # --- 使用 Unicode 范围生成字符集 ---
-        if os.path.exists(self.char_dict_full_path):
+        self.font_path = get_system_font_path('SimHei')
+        self.char_dict_full_path = Path(settings.paths.base_dir) / settings.paths.char_dict_path
+        
+        if self.char_dict_full_path.exists():
             with open(self.char_dict_full_path, 'r', encoding='utf-8') as f:
                 self.char_set = [line.strip() for line in f.readlines() if line.strip()]
         else:
             self.char_set = get_chinese_chars_from_unicode_range(max_chars=1000)
+            
         self.background_images = [
-            os.path.join(self.background_dir, f)
-            for f in os.listdir(self.background_dir)
-            if f.lower().endswith(('.jpg', '.png'))
+            f for f in self.background_dir.iterdir()
+            if f.suffix.lower() in ['.jpg', '.png']
         ]
         self._setup_dirs()
 
     def _setup_dirs(self):
-        os.makedirs(self.image_dir, exist_ok=True)
-        # Ensure labels.jsonl parent directory exists
-        Path(self.label_file).parent.mkdir(parents=True, exist_ok=True)
-
-
+        self.train_image_dir.mkdir(parents=True, exist_ok=True)
+        self.val_image_dir.mkdir(parents=True, exist_ok=True)
+        self.train_label_file.parent.mkdir(parents=True, exist_ok=True)
+        self.val_label_file.parent.mkdir(parents=True, exist_ok=True)
 
     def _find_perspective_coeffs(self, src, dst):
         # src, dst: [(x0,y0), (x1,y1), (x2,y2), (x3,y3)]
@@ -207,84 +211,96 @@ class TrOCRDataGenerator:
         return canvas
 
     def generate(self):
-        print(f"开始生成 TrOCR 数据集...")
+        print(f"开始生成 TrOCR 数据集 (训练/验证比例: {self.train_val_split})")
         if not self.font_path:
-            print("Error: No suitable Chinese font found.")
+            print("错误: 未找到合适的中文字体。")
             return
-        with open(self.label_file, mode='w', encoding='utf-8', newline='') as f:
 
-            for i in tqdm(range(self.num_images), desc="数据生成进度", unit="img"):
-                try:
-                    bg = Image.open(random.choice(self.background_images)).convert("RGBA")
-                    iw, ih = bg.size
-                    draw_layer = Image.new("RGBA", (iw, ih), (0,0,0,0))
-                    placed_info = []
-                    num_chars_to_generate = 3
-                    if len(self.char_set) < num_chars_to_generate:
-                        print(f"Warning: Character set has only {len(self.char_set)} characters, but {num_chars_to_generate} were requested. Adjusting to {len(self.char_set)}.")
-                        num_chars_to_generate = len(self.char_set)
+        num_train = int(self.num_images * self.train_val_split)
+        train_labels = []
+        val_labels = []
 
-                    chars = random.sample(self.char_set, num_chars_to_generate)
-                    scale = ((iw /300) + (ih/200))/2
-                    for char in chars:
-                        f_size = int(random.uniform(45, 60)*scale)
-                        font = ImageFont.truetype(self.font_path, f_size)
-                        styled_img = self._apply_character_style(char, font, font.getbbox(char))
-                        # 笔画厚度扰动
-                        if random.random() < 0.7:
-                            styled_img = self._apply_stroke_thickness_variation(styled_img)
-                        # 几何破坏
-                        if random.random() < 0.7:
-                            styled_img = self._apply_perspective_warp(styled_img)
-                        # 亮度调节
-                        if random.random() < 0.3:
-                            bg = bg.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.5, 1.2)))
+        for i in tqdm(range(self.num_images), desc="数据生成进度", unit="img"):
+            try:
+                is_training = i < num_train
+                
+                bg = Image.open(random.choice(self.background_images)).convert("RGBA")
+                iw, ih = bg.size
+                draw_layer = Image.new("RGBA", (iw, ih), (0,0,0,0))
+                placed_info = []
+                num_chars_to_generate = 3
+                
+                if len(self.char_set) < num_chars_to_generate:
+                    num_chars_to_generate = len(self.char_set)
 
-                        rotated = styled_img.rotate(random.randint(-60, 60), expand=True)
+                chars = random.sample(self.char_set, num_chars_to_generate)
+                scale = ((iw / 300) + (ih / 200)) / 2
+                
+                for char in chars:
+                    f_size = int(random.uniform(45, 60) * scale)
+                    font = ImageFont.truetype(self.font_path, f_size)
+                    styled_img = self._apply_character_style(char, font, font.getbbox(char))
+                    
+                    if random.random() < 0.7: styled_img = self._apply_stroke_thickness_variation(styled_img)
+                    if random.random() < 0.7: styled_img = self._apply_perspective_warp(styled_img)
+                    if random.random() < 0.3: bg = bg.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.5, 1.2)))
 
+                    rotated = styled_img.rotate(random.randint(-60, 60), expand=True)
+                    rw, rh = rotated.size
+                    
+                    if rh > ih * 0.8:
+                        ratio = (ih * 0.8) / rh
+                        rotated = rotated.resize((int(rw * ratio), int(rh * ratio)), Image.LANCZOS)
                         rw, rh = rotated.size
-                        # 确保文字不超出背景，且随机范围合法
-                        if rh > ih * 0.8:
-                            ratio = (ih * 0.8) / rh
-                            rotated = rotated.resize((int(rw*ratio), int(rh*ratio)), Image.LANCZOS)
-                            rw, rh = rotated.size
 
-                        x_max = max(0, iw - rw)
-                        y_min = int(ih * 0.15)
-                        y_max = max(y_min, ih - rh - 10)
+                    x_max = max(0, iw - rw)
+                    y_min = int(ih * 0.15)
+                    y_max = max(y_min, ih - rh - 10)
+                    
+                    x = random.randint(0, x_max) if x_max > 0 else 0
+                    y = random.randint(y_min, y_max) if y_max > y_min else y_min
+                    
+                    overlap = any(abs(x - p['x']) < rw * 0.45 for p in placed_info)
+                    
+                    if not overlap:
+                        draw_layer.paste(rotated, (x, y), rotated)
+                        placed_info.append({'char': char, 'x': x})
 
-                        # 使用 try-except 保护随机数生成或直接使用三元运算
-                        x = random.randint(0, x_max) if x_max > 0 else 0
-                        y = random.randint(y_min, y_max) if y_max > y_min else y_min
-                        
-                        overlap = False
-                        for p in placed_info:
-                            if abs(x - p['x']) < rw * 0.45: overlap = True; break
-                        
-                        if not overlap:
-                            draw_layer.paste(rotated, (x, y), rotated)
-                            placed_info.append({'char': char, 'x': x})
+                if not placed_info: continue
 
-                    if not placed_info: continue
+                placed_info.sort(key=lambda p: p['x'])
+                full_text = "".join([p['char'] for p in placed_info])
 
-                    # 按 X 坐标从左到右排序（TrOCR 识别顺序）
-                    placed_info.sort(key=lambda x: x['x'])
-                    full_text = "".join([p['char'] for p in placed_info])
+                final = Image.alpha_composite(bg, draw_layer).convert("RGB")
+                file_name = f"syn_{i:05d}.png"
+                
+                if is_training:
+                    save_dir = self.train_image_dir
+                    relative_path = Path("images") / "train" / file_name
+                    train_labels.append(f"{relative_path.as_posix()}\t{full_text}")
+                else:
+                    save_dir = self.val_image_dir
+                    relative_path = Path("images") / "val" / file_name
+                    val_labels.append(f"{relative_path.as_posix()}\t{full_text}")
+                
+                final.save(save_dir / file_name)
 
-                    final = Image.alpha_composite(bg, draw_layer).convert("RGB")
-                    file_name = f"syn_{i:05d}.png"
-                    final.save(os.path.join(self.image_dir, file_name))
-                    entry = {
-                        "file_name": file_name,
-                        "text": full_text
-                    }
-                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            except Exception as e:
+                tqdm.write(f"第 {i} 张图片生成出错: {e}")
 
-                except Exception as e:
-                    tqdm.write(f"第 {i} 张图片生成出错: {e}")
+        # Write label files after the loop
+        with open(self.train_label_file, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(train_labels))
+        
+        with open(self.val_label_file, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(val_labels))
 
-        print(f"完成！生成了 {self.num_images} 张图片。标签: {self.label_file}")
+        print(f"完成！生成了 {len(train_labels)} 张训练图片和 {len(val_labels)} 张验证图片。")
+        print(f"  - 训练集标签: {self.train_label_file}")
+        print(f"  - 验证集标签: {self.val_label_file}")
+
 
 if __name__ == '__main__':
     generator = TrOCRDataGenerator(num_images=5) # 建议生产环境设为 10000
     generator.generate()
+

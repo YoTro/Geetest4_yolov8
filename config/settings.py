@@ -26,7 +26,6 @@ class PathConfig:
     trocr_dataset_dir: str = "data/dataset/trocr"
     synthetic_main_data_dir: str = "data/raw/synthetic_main_data"
     background_images_dir: str = "data/raw/backgrounds"
-    template_dir: str = "data/templates" # NEW: Directory for template images
     font_dir: str = "assets/fonts" # NEW: Directory for fonts
     debug_output_dir: str = "logs/debug_output" # NEW: Directory for saving debug images
     dict_image_dir: str = "utils/dict"
@@ -125,8 +124,8 @@ class GeetestConfig:
 @dataclass
 class ModeSwitchConfig:
     """模式切换配置"""
-    max_auto_failures: int = 3
-    min_success_for_switch: int = 5
+    max_auto_failures: int = 5
+    min_success_for_switch: int = 1
     manual_timeout: int = 60
 
 @dataclass
@@ -198,7 +197,7 @@ class TrOCRTrainingConfig:
     epochs: int = 10
     batch_size: int = 8
     learning_rate: float = 5e-5
-    device: str = "cuda" # 'cuda' or 'cpu'
+    device: str = "cpu" # 'cuda' or 'cpu'
     patience: int = 5 # 早停
     save_total_limit: int = 2 # 限制checkpoint储存
     metric_for_best_model: str = "eval_loss" # 监控指标
@@ -239,8 +238,8 @@ class ImageMatcherConfig:
     """图片匹配器相关配置"""
     default_weights: Dict[str, float] = field(default_factory=lambda: {
         'ssim': 0.1,
-        'hog': 0.3,
-        'proj': 0.6
+        'hog': 0.6,
+        'proj': 0.3
     })
     min_match_score: float = 0.48 # 最小匹配分数阈值，低于此阈值则认为匹配失败
 
@@ -278,7 +277,7 @@ class Settings:
     
     # 根级运行时配置
     debug_mode: bool = False
-    save_debug_images: bool = True
+    save_debug_images: bool = False
 
     def __post_init__(self):
         """在初始化后执行, 确保目录存在"""

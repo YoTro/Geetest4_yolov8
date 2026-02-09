@@ -95,8 +95,8 @@ def run_collection_pipeline(
     运行数据收集流水线，支持代理模式和降频模式。
     """
     logger = logging.getLogger(__name__)
-    main_image_output_dir = Path(output_dir) / "images"
-    ques_image_output_dir = Path(output_dir) /"ques_imgs"
+    main_image_output_dir = Path(output_dir) / "main_images"
+    ques_image_output_dir = Path(output_dir) /"ques_images"
 
     # Create train and val directories
     for folder in [main_image_output_dir, ques_image_output_dir]:

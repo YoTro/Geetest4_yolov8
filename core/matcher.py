@@ -10,6 +10,7 @@ from skimage.metrics import structural_similarity as ssim
 from sklearn.metrics.pairwise import cosine_similarity
 from scipy.optimize import linear_sum_assignment
 from config.settings import settings # NEW: Import global settings
+from utils import image_processor # NEW: Import image_processor
 
 class ImageMatcher:
     def __init__(self, use_cache=True):
@@ -158,79 +159,6 @@ class ImageMatcher:
                 best_char = char
 
         return best_char, max_score
-    def _segment_and_straighten_char(self, img_pil):
-        """
-        使用 GrabCut 分割前景并使用 minAreaRect 校正方向。
-        返回4个旋转角度 (0, 90, 180, 270) 的 PIL 图像列表。
-        """
-        img_cv = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
-        mask = np.zeros(img_cv.shape[:2], np.uint8)
-        rect = (1, 1, img_cv.shape[1] - 2, img_cv.shape[0] - 2)
-
-        bgdModel = np.zeros((1, 65), np.float64)
-        fgdModel = np.zeros((1, 65), np.float64)
-
-        try:
-            cv2.grabCut(img_cv, mask, rect, bgdModel, fgdModel, 5, cv2.GC_INIT_WITH_RECT)
-        except Exception:
-            # 如果 GrabCut 失败（例如，对于完全空白的图像），返回空列表
-            return []
-
-        mask2 = np.where((mask == 2) | (mask == 0), 0, 1).astype('uint8')
-        
-        # 寻找前景轮廓
-        contours, _ = cv2.findContours(mask2, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if not contours:
-            return []
-
-        # 找到最大轮廓并获取其最小面积矩形
-        largest_contour = max(contours, key=cv2.contourArea)
-        rect = cv2.minAreaRect(largest_contour)
-        
-        angle = rect[2]
-        size = tuple(map(int, rect[1]))
-        center = tuple(map(int, rect[0]))
-
-        # 根据角度调整，确保宽度大于高度
-        if size[0] < size[1]:
-            angle += 90
-            size = (size[1], size[0])
-
-        # 获取旋转矩阵并应用
-        M = cv2.getRotationMatrix2D(center, angle, 1.0)
-        img_rotated = cv2.warpAffine(img_cv, M, (img_cv.shape[1], img_cv.shape[0]))
-
-        # 裁剪出校正后的字符区域
-        img_cropped = cv2.getRectSubPix(img_rotated, size, center)
-        
-        if img_cropped is None:
-            # 如果裁剪失败，通常是因为尺寸或中心点问题，返回空列表
-            print(f"Debug: cv2.getRectSubPix for img_cropped returned None for size={size}, center={center}")
-            return []
-
-        # 为白色背景创建一个新的图像
-        img_final_bgr = np.full((size[1], size[0], 3), (255, 255, 255), dtype=np.uint8)
-        
-        # 将 GrabCut 蒙版也进行旋转和裁剪
-        mask_rotated = cv2.warpAffine(mask2, M, (mask2.shape[1], mask2.shape[0]))
-        mask_cropped = cv2.getRectSubPix(mask_rotated, size, center)
-        
-        # 再次检查 mask_cropped 是否为 None，以防万一
-        if mask_cropped is None:
-            print(f"Debug: cv2.getRectSubPix for mask_cropped returned None for size={size}, center={center}")
-            return []
-        
-        # 使用蒙版将前景粘贴到白色背景上
-        img_final_bgr[mask_cropped == 1] = img_cropped[mask_cropped == 1]
-
-        base_img = Image.fromarray(cv2.cvtColor(img_final_bgr, cv2.COLOR_BGR2RGB))
-
-        # 生成四个旋转角度的图像
-        rotated_images = []
-        for rot_angle in [0, 90, 180, 270]:
-            rotated_images.append(base_img.rotate(rot_angle, expand=True))
-            
-        return rotated_images
 
     def find_best_matches_for_main_image(self, main_char_images, ques_char_images, weights=None):
         """
@@ -257,8 +185,8 @@ class ImageMatcher:
         similarity_matrix = np.zeros((num_main, num_ques))
 
         for i, main_img in enumerate(main_char_images):
-            # 2a. 分割和校正主图中的字符，并获得4个旋转版本
-            rotated_main_images = self._segment_and_straighten_char(main_img)
+            # 2a. 分割和校正主图中的字符，并获得多个候选旋转版本
+            rotated_main_images = image_processor.generate_char_candidates(main_img)
             if not rotated_main_images:
                 continue
 
@@ -266,7 +194,7 @@ class ImageMatcher:
                 ques_img_array, ques_hog, ques_proj = ques_features[j]
                 max_score_for_this_pair = -1.0
 
-                # 2b. 遍历4个旋转版本，找到与当前 ques_char 最高的匹配分
+                # 2b. 遍历多个候选版本，找到与当前 ques_char 最高的匹配分
                 for rot_img in rotated_main_images:
                     main_img_array, main_hog, main_proj = self._extract_features(rot_img)
                     if main_img_array is None:

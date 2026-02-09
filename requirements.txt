@@ -10,9 +10,7 @@ pycryptodome>=3.14.0
 albumentations>=1.0.0
 tqdm>=4.62.0
 transformers>=4.40.0
-datasets>=2.0.0
 easyocr
-accelerate>=0.26.0
 paddleocr==2.8.0
 lmdb
 rapidfuzz

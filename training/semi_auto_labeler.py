@@ -150,13 +150,22 @@ def run_semi_auto_labeler(
             final_summary_message += f"  标签文件保存在 '{label_dir_single}' 目录下。\n"
 
         elif save_mode == 'consolidated':
-            consolidated_output_path = Path(output_dir)
-            consolidated_output_path.mkdir(parents=True, exist_ok=True)
+            # Base directory for all consolidated labels (e.g., output_dir/labels)
+            consolidated_labels_root = Path(output_dir) / "labels" 
+            consolidated_labels_root.mkdir(parents=True, exist_ok=True) # Ensure base exists
+
             for split, labels in all_labels.items():
                 if not labels: continue
-                output_file_path = consolidated_output_path / f"rec_gt_{split}.txt"
+                
+                # Create split-specific directory (e.g., output_dir/labels/train)
+                split_output_dir = consolidated_labels_root / split
+                split_output_dir.mkdir(parents=True, exist_ok=True)
+
+                output_file_path = split_output_dir / f"rec_gt_{split}.txt" # e.g., output_dir/labels/train/rec_gt_train.txt
                 with open(output_file_path, 'w', encoding='utf-8') as f:
                     for img_path, label in labels:
+                        # Image path should be relative to input_base_dir's images folder
+                        # Example: images/train/some_image.png\tLabel
                         relative_img_path = img_path.relative_to(Path(input_base_dir)).as_posix()
                         f.write(f"{relative_img_path}\t{label}\n")
                 consolidated_output_paths[split] = str(output_file_path)
@@ -180,7 +189,7 @@ if __name__ == '__main__':
     parser.add_argument("--lang", default="ch_sim,en", help="EasyOCR识别的语言列表，用逗号分隔。" )
     parser.add_argument("--conf-thres", type=float, default=0.5, help="EasyOCR识别结果的置信度阈值。" )
     parser.add_argument("--save-mode", default="single", choices=['single', 'consolidated'], help="保存模式")
-    parser.add_argument("--output-dir", default="data/dataset/paddle_labeled", help="'consolidated' 模式下的输出目录。" )
+    parser.add_argument("--output-dir", default="data/dataset/paddle", help="'consolidated' 模式下的输出目录。" )
     
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

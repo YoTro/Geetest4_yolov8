@@ -204,12 +204,14 @@ class CaptchaProcessor:
     def _recognize_entities(self, main_image: Any, ques_images: List[Any], detections: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
         """
         步骤 2: 实体识别。对所有图片进行文字识别。
+        - Ques图片: 优先使用ImageMatcher，失败则回退到OCR。
+        - Main图片: 为每个检测框生成多个候选图，全部送入OCR，选择置信度最高的结果。
         """
         self.logger.info("--- 自动处理 步骤 2: 实体识别 ---")
         ques_data = [{'index': i, 'image': img} for i, img in enumerate(ques_images)]
         
+        # --- 识别问题图片 (Ques Images) ---
         for item in ques_data:
-            # 优先使用 ImageMatcher
             if self.image_matcher.dictionary:
                 char, score = self.image_matcher.find_best_match(item['image'], self.settings.image_matcher.default_weights)
                 if char and score >= self.settings.image_matcher.min_match_score:
@@ -218,15 +220,38 @@ class CaptchaProcessor:
                     continue
                 self.logger.warning(f"Ques {item['index']}: ImageMatcher 失败或低分 ({score:.4f})，回退到 OCR。")
             
-            # 回退到 OCR
             text, score = self.ocr_recognizer.recognize(item['image'])
             item.update({'char': text[0] if text else '', 'score': score, 'recognized_by': 'ocr'})
             self.logger.info(f"Ques {item['index']}: OCR 识别 -> '{item['char']}' (置信度: {item['score']:.2f})")
 
+        # --- 识别主图片中的检测对象 (Detections) ---
         for i, det in enumerate(detections):
             det['det_index'] = i
-            det['char'], det['score'] = self.ocr_recognizer.recognize(main_image.crop(det['bbox']))
-            self.logger.debug(f"Det {det['det_index']}: OCR 识别 -> '{det['char']}' (置信度: {det['score']:.2f})")
+            char_image_with_bg = main_image.crop(det['bbox'])
+            
+            # 1. 为每个检测框生成多个高质量候选图
+            candidate_images = image_processor.generate_char_candidates(char_image_with_bg)
+            
+            if not candidate_images:
+                det['char'], det['score'] = '', 0.0
+                self.logger.warning(f"Det {i}: 无法为识别生成候选图像。")
+                continue
+
+            # 2. 遍历所有候选图，找到置信度最高的OCR结果
+            best_char = ''
+            highest_score = -1.0
+            
+            for candidate_img in candidate_images:
+                text, score = self.ocr_recognizer.recognize(candidate_img)
+                # 确保我们只处理单个字符的识别结果
+                char = text[0] if text and len(text) == 1 else ''
+                if score > highest_score:
+                    highest_score = score
+                    best_char = char
+
+            det['char'] = best_char
+            det['score'] = highest_score
+            self.logger.debug(f"Det {det['det_index']}: 从 {len(candidate_images)} 个候选中最佳OCR结果 -> '{det['char']}' (置信度: {det['score']:.2f})")
         
         return ques_data, detections
 

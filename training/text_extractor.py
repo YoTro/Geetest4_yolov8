@@ -11,6 +11,7 @@ from typing import Dict, Any
 import cv2
 from tqdm import tqdm
 import numpy as np
+from PIL import Image # NEW: Import PIL
 
 # 确保能导入项目根目录的模块
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -20,12 +21,14 @@ if project_root not in sys.path:
 
 from config import settings
 from core.yolo_inference import load_model, detect
+from utils import image_processor # NEW: Import image_processor
 
 def _extract_chars_with_labels(model, class_names, yolo_config, input_image_dir, output_base_dir):
     """
     私有函数：当gt.jsonl存在时，提取单字并生成标注。
+    此版本会调用 generate_char_candidates 来增强数据。
     """
-    print("--- 检测到 gt.jsonl, 执行单字提取与标注任务 ---")
+    print("--- 检测到 gt.jsonl, 执行单字提取与数据增强任务 ---")
     # 注意：gt.jsonl 和 images/ 目录应该在同一个父目录下
     input_root_dir = Path(input_image_dir).parent
     gt_path = input_root_dir / "gt.jsonl"
@@ -42,8 +45,9 @@ def _extract_chars_with_labels(model, class_names, yolo_config, input_image_dir,
     new_labels = []
     processed_count = 0
     skipped_mismatch = 0
+    augmented_count = 0
 
-    for item in tqdm(gt_data, desc="生成单字数据"):
+    for item in tqdm(gt_data, desc="生成并增强单字数据"):
         image_filename = item['file_name']
         text_label = item['text']
         image_path = os.path.join(images_path, image_filename)
@@ -64,28 +68,42 @@ def _extract_chars_with_labels(model, class_names, yolo_config, input_image_dir,
 
         for i, (box, char) in enumerate(zip(boxes, text_label)):
             x_min, y_min, x_max, y_max = map(int, box)
-            cropped_char_img = image[y_min:y_max, x_min:x_max]
+            cropped_char_img_cv = image[y_min:y_max, x_min:x_max]
             
-            if cropped_char_img.size == 0:
+            if cropped_char_img_cv.size == 0:
                 continue
 
+            # --- 数据增强逻辑 ---
+            # 1. 将cv2读取的BGR图像转换为PIL的RGB图像
+            pil_img = Image.fromarray(cv2.cvtColor(cropped_char_img_cv, cv2.COLOR_BGR2RGB))
+            
+            # 2. 调用函数生成多个高质量候选图
+            candidate_images = image_processor.generate_char_candidates(pil_img)
+            
             base_name, ext = os.path.splitext(image_filename)
-            new_filename = f"{base_name}_char_{i}{ext}"
-            new_image_path = output_images_dir / new_filename
-            cv2.imwrite(str(new_image_path), cropped_char_img)
 
-            new_labels.append({"file_name": new_filename, "text": char})
+            # 3. 保存所有候选图并添加标签
+            for j, candidate_pil in enumerate(candidate_images):
+                new_filename = f"{base_name}_char_{i}_aug_{j}{ext}"
+                new_image_path = output_images_dir / new_filename
+                
+                # 将PIL的RGB图像转回cv2的BGR格式以便保存
+                candidate_cv = cv2.cvtColor(np.array(candidate_pil), cv2.COLOR_RGB2BGR)
+                cv2.imwrite(str(new_image_path), candidate_cv)
+
+                new_labels.append({"file_name": new_filename, "text": char})
+                augmented_count += 1
         
         processed_count += 1
 
     with open(output_labels_path, 'w', encoding='utf-8') as f:
         for label in new_labels:
-            f.write(json.dumps(label, ensure_ascii=False) + '\\n')
+            f.write(json.dumps(label, ensure_ascii=False) + '\n')
 
     print("--- 单字数据集生成完成 ---")
     return {
         "success": True, 
-        "message": f"处理图片: {processed_count}, 跳过: {skipped_mismatch}, 生成样本: {len(new_labels)}",
+        "message": f"处理图片: {processed_count}, 跳过: {skipped_mismatch}, 生成增强样本: {augmented_count}",
         "output_images": str(output_images_dir),
         "output_labels": str(output_labels_path)
     }

@@ -25,11 +25,11 @@ def run_test_matching():
     if not matcher.dictionary:
         return
 
-    weights = {'ssim': 0.1, 'hog': 0.5, 'proj': 0.4}
+    weights = {'ssim': 0.1, 'hog': 0.6, 'proj': 0.3}
     print(f"\n当前匹配权重: {weights}")
 
-    test_char = '定'
-    test_image_path = f"./data/dataset/paddle/images/val/geetest_1769936341131_172_0.png"
+    test_char = '柳'
+    test_image_path = f"./data/dataset/paddle/images/val/geetest_1770134346618_494_2.png"
     if not os.path.exists(test_image_path):
         print(f"测试图片 '{test_image_path}' 不存在。请检查路径。")
         return
@@ -61,14 +61,14 @@ def run_advanced_matching_test():
     # ques_image_paths 应该是对应的、背景清晰的“问题”文字图片。
     # 确保两个列表的长度一致。
     main_image_paths = [
-        settings.paths.base_dir+"/data/dataset/trocr/images/main_char_1.png",
-        settings.paths.base_dir+"/data/dataset/trocr/images/main_char_2.png",
-        settings.paths.base_dir+"/data/dataset/trocr/images/main_char_3.png",
+        settings.paths.base_dir+"/data/dataset/paddle/main_images/208 (40)_char_2.png",
+        settings.paths.base_dir+"/data/dataset/paddle/main_images/4_char_2.png",
+        settings.paths.base_dir+"/data/dataset/paddle/main_images/102_char_2.png",
     ]
     ques_image_paths = [
-        settings.paths.base_dir+"/data/raw/collected/ques_char_1.png",
-        settings.paths.base_dir+"/data/raw/collected/ques_char_2.png",
-        settings.paths.base_dir+"/data/raw/collected/ques_char_3.png",
+        settings.paths.base_dir+"/data/dataset/paddle/images/val/geetest_1770134346618_494_2.png",
+        settings.paths.base_dir+"/data/dataset/paddle/images/val/geetest_1770134345843_393_2.png",
+        settings.paths.base_dir+"/data/dataset/paddle/images/val/geetest_1770134345843_393_0.png",
     ]
     
     # 检查路径是否为占位符
