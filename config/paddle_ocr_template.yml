@@ -70,7 +70,7 @@ Train:
           std: [0.5, 0.5, 0.5]
           order: 'hwc'
       - RecResizeImg:
-          image_shape: _REC_IMAGE_SHAPE_
+          image_shape: [3,32,32]
       - KeepKeys: 
           keep_keys: ['image', 'label', 'length']
 
@@ -96,7 +96,7 @@ Eval:
           std: [0.5, 0.5, 0.5]
           order: 'hwc'
       - RecResizeImg:
-          image_shape: _REC_IMAGE_SHAPE_
+          image_shape: [3,32,32]
       - KeepKeys: 
           keep_keys: ['image', 'label', 'length']
       
